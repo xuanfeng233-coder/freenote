@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FreeNote</string>
+
+    <!-- Header -->
+    <string name="app_subtitle">支持 NCM / QMC(含新版 EKey) / TM / KGM / KGG / KWM</string>
+
+    <!-- Actions -->
+    <string name="select_files">选择文件</string>
+    <string name="decrypt_all">全部解密</string>
+    <string name="play">播放</string>
+    <string name="share">分享</string>
+    <string name="share_chooser_title">分享音频文件</string>
+    <string name="import_keys">导入密钥</string>
+    <string name="import_keys_n">密钥 (%1$d)</string>
+    <string name="keys_imported">已导入 %1$d 个密钥（共 %2$d 个）</string>
+    <string name="keys_import_failed">密钥导入失败：无法识别文件（支持 QQ音乐 MMKV / JSON / 文本）</string>
+
+    <!-- Status messages -->
+    <string name="status_idle">选择文件开始解密</string>
+    <string name="status_selected">已选择 %1$d 个文件，点击「全部解密」开始</string>
+    <string name="status_decrypting">解密中… (%1$d/%2$d)</string>
+    <string name="status_done">解密完成 · 成功 %1$d · 失败 %2$d</string>
+
+    <!-- Empty state -->
+    <string name="empty_title">还没有选择文件</string>
+    <string name="empty_hint">点击上方按钮选择加密歌曲</string>
+
+    <!-- Errors -->
+    <string name="error_open_failed">无法打开播放器</string>
+    <string name="error_share_failed">无法分享文件</string>
+    <string name="error_unknown_audio">无法识别解密后的音频格式（可能密钥错误或暂不支持该格式）</string>
+
+    <!-- Content descriptions (accessibility) -->
+    <string name="cd_status_success">解密成功</string>
+    <string name="cd_status_failed">解密失败</string>
+    <string name="cd_decrypting">解密中</string>
+    <string name="cd_empty_icon">音乐图标</string>
+
+    <!-- Player -->
+    <string name="now_playing">正在播放</string>
+    <string name="time_zero">0:00</string>
+    <string name="edit_tags">编辑标签</string>
+    <string name="playback_error">无法播放该文件</string>
+    <string name="unknown_artist">未知艺术家</string>
+    <string name="cd_collapse">收起播放器</string>
+    <string name="cd_cover">专辑封面</string>
+    <string name="cd_play_pause">播放 / 暂停</string>
+    <string name="cd_next">下一首</string>
+    <string name="cd_previous">上一首</string>
+    <string name="cd_shuffle">随机播放</string>
+    <string name="cd_repeat">循环模式</string>
+
+    <!-- Help / key-source note -->
+    <string name="help">说明</string>
+    <string name="cd_help">使用说明</string>
+    <string name="help_title">QQ音乐 / 酷狗音乐 密钥说明</string>
+    <string name="help_message">部分新版客户端不把解密密钥写进文件，密钥保存在 App 私有数据库里。这类文件需要 root 导出密钥（用「导入密钥」），或者改用旧版客户端下载——旧版会把密钥内嵌进文件，可直接离线解密：\n\n• QQ音乐（尾部 STag / musicex，约客户端 ≥11.6）\n  └ 旧版安装包 10.12.0.8（v11.6 前内嵌密钥）\n\n• 酷狗音乐（.kgg，约安卓 ≥20.x）\n  └ 回退到安卓 12.5.6（最后支持 .kgm 的版本，2024-11）\n\n网易云(.ncm)、QQ音乐内嵌密钥(QTag/数字尾部)、酷狗 .kgm/.vpr、酷我 .kwm 均可直接离线解密，无需密钥导入。</string>
+    <string name="help_got_it">知道了</string>
+
+    <!-- Output folder + storage permission -->
+    <string name="output_folder">FreeNote</string>
+    <string name="saved_to_folder">已保存到 /sdcard/FreeNote</string>
+    <string name="saved_to_fallback">已保存到 音乐/FreeNote（未授予「所有文件访问」权限）</string>
+    <string name="saved_cache_only">已保存到应用缓存（未授予存储权限，无法写入公开目录）</string>
+    <string name="resync_failed">同步到 FreeNote 失败（存储权限可能已撤销）</string>
+    <string name="storage_permission_title">需要存储权限</string>
+    <string name="storage_permission_message">为把解密后的音频保存到 /sdcard/FreeNote 文件夹，需要授予「所有文件访问」权限。\n\n若不授予，文件将改存到「音乐/FreeNote」（可在音乐 App 中找到）。</string>
+    <string name="action_grant">去授权</string>
+    <string name="action_skip">暂不</string>
+
+    <!-- Metadata editor -->
+    <string name="edit_metadata">编辑信息</string>
+    <string name="field_title">标题</string>
+    <string name="field_artist">艺术家</string>
+    <string name="field_album">专辑</string>
+    <string name="change_cover">更换封面</string>
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+    <string name="saving">保存中…</string>
+    <string name="saved">已保存到文件</string>
+    <string name="save_failed">保存失败：%1$s</string>
+    <string name="tags_unsupported">该格式暂不支持编辑标签</string>
+</resources>

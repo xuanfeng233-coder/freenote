@@ -1,0 +1,25 @@
+# ───────── Android / Gradle build output ─────────
+.gradle/
+build/
+app/build/
+captures/
+*.iml
+.cxx/
+
+# ───────── Local environment ─────────
+# Points at the local Android SDK install — machine-specific.
+local.properties
+.idea/
+.DS_Store
+
+# ───────── Signing identity — NEVER publish ─────────
+# Real keystore + its passwords. Cloners create their own (see keystore.properties.example).
+keystore.properties
+*.keystore
+*.jks
+
+# ───────── Binaries ─────────
+# Built app APKs go to GitHub Releases, not the repo.
+# Bundled third-party app installers (QQ音乐 / 酷狗 …) are copyrighted — never commit them.
+*.apk
+*.aab
