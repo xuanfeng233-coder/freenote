@@ -24,15 +24,20 @@ writes plain FLAC/MP3/OGG/etc.
 # Release build (signed only if keystore.properties + the .keystore exist; else unsigned)
 ./gradlew assembleRelease        # → app/build/outputs/apk/release/app-release.apk
 
+# JVM unit tests for codec-adjacent pure logic
+./gradlew :app:testDebugUnitTest
+
 # Install to a connected device (-r replace, -t allow test, -g grant runtime perms)
 adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk
 ```
 
 - **Toolchain**: Java 17, Android SDK 34, Gradle 8.5 (wrapper), AGP 8.2.2, Kotlin 1.9.22.
   `versionName` / `versionCode` live in `app/build.gradle.kts` (the *only* source of truth).
-- **No unit-test suite.** Codecs are validated by porting test vectors from reference
-  implementations (see below). Real-device smoke test is manual: Bluetooth/`adb push` a
-  real `.ncm` / `.qmc` / `.kgm` / `.kwm` to the phone, open it in the app, play the output.
+- **JVM unit tests now exist** under `app/src/test`. They cover pure logic around filename
+  sanitization, EKey/MMKV parsing, QMC footer behavior, malformed header bounds, and audio
+  format detection. Full codec vectors should still come only from known-good reference
+  implementations (see below). Real-device smoke testing remains manual: Bluetooth/`adb push`
+  a real `.ncm` / `.qmc` / `.kgm` / `.kwm` to the phone, open it in the app, play the output.
 - Historic test device: Vivo/OPPO `3142621725000KW` (Android 14+). If `adb install` hangs,
   unlock the screen / confirm the on-device install dialog.
 - Signing: real keystore is **git-ignored** (`keystore.properties`, `*.keystore`). Copy
@@ -91,9 +96,9 @@ adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk
   string literals in layouts/Kotlin. The QQ/Kugou version-rollback guidance is `help_message`.
 - **No hardcoded hex colors** in layouts — go through theme tokens (`colors.xml` → `themes.xml`,
   Material 3 dark theme).
-- Decrypted output → `/sdcard/FreeNote` (needs MANAGE_EXTERNAL_STORAGE; falls back to MediaStore
-  `Music/FreeNote`, then app cache). Output name: `<原名>解锁_HHmmss.<ext>`. Cache copy via
-  `FileProvider` powers share + in-app playback.
+- Public decrypted output defaults to MediaStore `Music/FreeNote` on Android 10+; legacy
+  direct storage is only for Android 9 and below where applicable. Output name:
+  `<原名>解锁_HHmmss.<ext>`. Cache copy via `FileProvider` powers share + in-app playback.
 - APE is decoded by no ExoPlayer build here — it decrypts fine but won't preview.
 
 ## Don't commit

@@ -72,6 +72,81 @@ data class DecryptResult(
 object MusicDecoder {
 
     private const val BUF_SIZE = 65536  // 64KB chunks
+    private const val MAX_NCM_KEY_LEN = 1 shl 20
+    private const val MAX_NCM_META_LEN = 4 shl 20
+    private const val MAX_NCM_COVER_FRAME_LEN = 32 shl 20
+    private const val MAX_NCM_IMAGE_LEN = 32 shl 20
+    private const val MAX_QMC_TRAILER_LEN = 1 shl 20
+    private const val MAX_QMC_EKEY_LEN = 0xFFFF
+
+    private fun invalid(message: String): Nothing = throw DecryptException(message)
+
+    private fun boundedLength(
+        value: Long,
+        max: Int,
+        allowZero: Boolean,
+        message: String
+    ): Int {
+        val min = if (allowZero) 0L else 1L
+        if (value < min || value > max) invalid(message)
+        return value.toInt()
+    }
+
+    private fun requireDataRange(dataSize: Int, pos: Int, length: Int, message: String) {
+        val end = pos.toLong() + length.toLong()
+        if (pos < 0 || length < 0 || end > dataSize.toLong()) invalid(message)
+    }
+
+    private fun readLeU32(data: ByteArray, pos: Int, message: String): Long {
+        requireDataRange(data.size, pos, 4, message)
+        return le32(data, pos)
+    }
+
+    private fun readBoundedLeU32(
+        data: ByteArray,
+        pos: Int,
+        max: Int,
+        allowZero: Boolean,
+        message: String
+    ): Int = boundedLength(readLeU32(data, pos, message), max, allowZero, message)
+
+    private fun readLeU32Long(raf: RandomAccessFile, message: String): Long {
+        val b = ByteArray(4)
+        try {
+            raf.readFully(b)
+        } catch (_: Exception) {
+            invalid(message)
+        }
+        return le32(b, 0)
+    }
+
+    private fun readBoundedLeU32(
+        raf: RandomAccessFile,
+        max: Int,
+        allowZero: Boolean,
+        message: String
+    ): Int = boundedLength(readLeU32Long(raf, message), max, allowZero, message)
+
+    private fun requireFileRange(fileSize: Long, offset: Long, length: Long, message: String) {
+        if (offset < 0 || length < 0 || offset > fileSize || offset + length > fileSize) {
+            invalid(message)
+        }
+    }
+
+    private fun skipFully(raf: RandomAccessFile, length: Long, message: String) {
+        requireFileRange(raf.length(), raf.filePointer, length, message)
+        raf.seek(raf.filePointer + length)
+    }
+
+    private fun ncmCoverSkipLength(coverFrameLen: Int, imgLen: Int): Int {
+        if (coverFrameLen == 0) return imgLen
+        if (imgLen > coverFrameLen) invalid("NCM 封面长度非法")
+        return coverFrameLen
+    }
+
+    private fun validateKgmAudioOffset(audioOffset: Long, fileSize: Long) {
+        if (audioOffset < 0x3CL || audioOffset > fileSize) invalid("KGM 音频偏移非法")
+    }
 
     // ── NCM AES-128-ECB key (neteasecloudmusic built-in) ──────────
     private val SCORE_KEY = byteArrayOf(
@@ -215,7 +290,8 @@ object MusicDecoder {
 
     fun detectAudioFormat(data: ByteArray): AudioFormat {
         return when {
-            data.size >= 2 && data[0].toInt() == 0xFF && (data[1].toInt() and 0xE0) == 0xE0 -> AudioFormat.MP3
+            data.size >= 2 && (data[0].toInt() and 0xFF) == 0xFF &&
+                    (data[1].toInt() and 0xE0) == 0xE0 -> AudioFormat.MP3
             data.size >= 4 && data[0] == 0x66.toByte() && data[1] == 0x4C.toByte() &&
                     data[2] == 0x61.toByte() && data[3] == 0x43.toByte() -> AudioFormat.FLAC
             data.size >= 4 && data[0] == 0x4F.toByte() && data[1] == 0x67.toByte() &&
@@ -280,42 +356,44 @@ object MusicDecoder {
         var pos = 10 // skip magic (8) + padding (2)
 
         // Key length (4B LE)
-        val keyLen = ((data[pos].toInt() and 0xFF) or
-                ((data[pos + 1].toInt() and 0xFF) shl 8) or
-                ((data[pos + 2].toInt() and 0xFF) shl 16) or
-                ((data[pos + 3].toInt() and 0xFF) shl 24))
+        val keyLen = readBoundedLeU32(data, pos, MAX_NCM_KEY_LEN, false, "NCM 密钥长度非法")
         pos += 4
 
         // Read key data, XOR with 0x64, AES-128-ECB decrypt
+        requireDataRange(data.size, pos, keyLen, "NCM 密钥数据不完整")
         val rawKey = data.copyOfRange(pos, pos + keyLen)
         pos += keyLen
         for (i in rawKey.indices) rawKey[i] = (rawKey[i].toInt() xor 0x64).toByte()
-        val decryptedKey = aes128EcbDecrypt(rawKey)
+        val decryptedKey = try {
+            aes128EcbDecrypt(rawKey)
+        } catch (_: Exception) {
+            invalid("NCM 密钥数据损坏")
+        }
+        if (decryptedKey.size <= 17) invalid("NCM 密钥数据损坏")
 
         // buildKeyBox with bytes 17+
         val keyBox = buildKeyBox(decryptedKey.copyOfRange(17, decryptedKey.size))
 
         // Skip metadata
-        val metaLen = ((data[pos].toInt() and 0xFF) or
-                ((data[pos + 1].toInt() and 0xFF) shl 8) or
-                ((data[pos + 2].toInt() and 0xFF) shl 16) or
-                ((data[pos + 3].toInt() and 0xFF) shl 24))
-        pos += 4 + metaLen
+        val metaLen = readBoundedLeU32(data, pos, MAX_NCM_META_LEN, true, "NCM 元数据长度非法")
+        pos += 4
+        requireDataRange(data.size, pos, metaLen, "NCM 元数据不完整")
+        pos += metaLen
 
         // Skip CRC32 (4B) + image version (1B)
+        requireDataRange(data.size, pos, 5, "NCM 头部不完整")
         pos += 5
 
         // Skip cover frame
-        val coverFrameLen = ((data[pos].toInt() and 0xFF) or
-                ((data[pos + 1].toInt() and 0xFF) shl 8) or
-                ((data[pos + 2].toInt() and 0xFF) shl 16) or
-                ((data[pos + 3].toInt() and 0xFF) shl 24))
+        val coverFrameLen = readBoundedLeU32(
+            data, pos, MAX_NCM_COVER_FRAME_LEN, true, "NCM 封面长度非法"
+        )
         pos += 4
-        val imgLen = ((data[pos].toInt() and 0xFF) or
-                ((data[pos + 1].toInt() and 0xFF) shl 8) or
-                ((data[pos + 2].toInt() and 0xFF) shl 16) or
-                ((data[pos + 3].toInt() and 0xFF) shl 24))
-        pos += 4 + imgLen + (coverFrameLen - imgLen)
+        val imgLen = readBoundedLeU32(data, pos, MAX_NCM_IMAGE_LEN, true, "NCM 图片长度非法")
+        pos += 4
+        val coverSkip = ncmCoverSkipLength(coverFrameLen, imgLen)
+        requireDataRange(data.size, pos, coverSkip, "NCM 封面数据不完整")
+        pos += coverSkip
 
         // Decrypt audio data with keyBox
         val audioData = data.copyOfRange(pos, data.size)
@@ -373,16 +451,16 @@ object MusicDecoder {
 
             raf.seek(10L) // magic(8) + padding(2)
 
-            val keyLen = readLeU32(raf)
-            if (keyLen <= 0 || keyLen > 1 shl 20) return null
-            raf.skipBytes(keyLen) // skip key data — we only want metadata + cover here
+            val keyLen = readBoundedLeU32(raf, MAX_NCM_KEY_LEN, false, "NCM 密钥长度非法")
+            skipFully(raf, keyLen.toLong(), "NCM 密钥数据不完整")
 
             // Metadata block
-            val metaLen = readLeU32(raf)
+            val metaLen = readBoundedLeU32(raf, MAX_NCM_META_LEN, true, "NCM 元数据长度非法")
             var title: String? = null
             var artist: String? = null
             var album: String? = null
-            if (metaLen in 1..(1 shl 22)) {
+            if (metaLen > 0) {
+                requireFileRange(raf.length(), raf.filePointer, metaLen.toLong(), "NCM 元数据不完整")
                 val meta = ByteArray(metaLen)
                 raf.readFully(meta)
                 try {
@@ -412,18 +490,24 @@ object MusicDecoder {
             }
 
             // CRC32(4) + gap(1) — matches decryptNCMStream's skipBytes(5)
-            raf.skipBytes(5)
+            skipFully(raf, 5, "NCM 头部不完整")
             // First length (cover frame; usually 0 in the gap), second is the real image size
-            readLeU32(raf)
-            val imgLen = readLeU32(raf)
+            val coverFrameLen = readBoundedLeU32(
+                raf, MAX_NCM_COVER_FRAME_LEN, true, "NCM 封面长度非法"
+            )
+            val imgLen = readBoundedLeU32(raf, MAX_NCM_IMAGE_LEN, true, "NCM 图片长度非法")
+            val coverSkip = ncmCoverSkipLength(coverFrameLen, imgLen)
             var cover: ByteArray? = null
-            if (imgLen in 1..(1 shl 25)) {
+            if (imgLen > 0) {
+                requireFileRange(raf.length(), raf.filePointer, imgLen.toLong(), "NCM 封面数据不完整")
                 try {
                     val img = ByteArray(imgLen)
                     raf.readFully(img)
                     cover = img
                 } catch (_: Exception) { /* no cover */ }
             }
+            val trailingCoverBytes = coverSkip - imgLen
+            if (trailingCoverBytes > 0) skipFully(raf, trailingCoverBytes.toLong(), "NCM 封面数据不完整")
 
             if (title == null && artist == null && album == null && cover == null) return null
             return NcmInfo(title, artist, album, cover)
@@ -432,15 +516,6 @@ object MusicDecoder {
         } finally {
             raf.close()
         }
-    }
-
-    private fun readLeU32(raf: RandomAccessFile): Int {
-        val b = ByteArray(4)
-        raf.readFully(b)
-        return (b[0].toInt() and 0xFF) or
-                ((b[1].toInt() and 0xFF) shl 8) or
-                ((b[2].toInt() and 0xFF) shl 16) or
-                ((b[3].toInt() and 0xFF) shl 24)
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -525,8 +600,11 @@ object MusicDecoder {
             raf.seek(fileSize - 8)
             raf.readFully(ml)
             val metaLen = be32(ml, 0)
+            if (metaLen < 0 || metaLen > MAX_QMC_TRAILER_LEN) {
+                invalid("QMC 尾部元数据长度非法")
+            }
             val audioLen = fileSize - 8 - metaLen
-            if (audioLen < 0 || metaLen < 0) throw DecryptException(MSG_NO_KEY)
+            if (audioLen < 0) invalid("QMC 尾部元数据长度非法")
             val meta = ByteArray(metaLen)
             raf.seek(audioLen)
             raf.readFully(meta)
@@ -542,8 +620,11 @@ object MusicDecoder {
             raf.seek(fileSize - 8)
             raf.readFully(ml)
             val metaLen = be32(ml, 0)
+            if (metaLen < 0 || metaLen > MAX_QMC_TRAILER_LEN) {
+                invalid("QMC 尾部元数据长度非法")
+            }
             val audioLen = fileSize - 8 - metaLen
-            if (audioLen < 0) throw DecryptException(MSG_NO_KEY)
+            if (audioLen < 0) invalid("QMC 尾部元数据长度非法")
             return QmcFooter(audioLen, null, needsExternalKey = true)
         }
         // "cex\0" (musicex) → key in client MMKV database; trailer header at fileSize-16
@@ -555,14 +636,16 @@ object MusicDecoder {
             raf.readFully(hdr)
             val tagSize = le32(hdr, 0)
             val audioLen = fileSize - tagSize
-            if (tagSize < 16 || audioLen < 0) throw DecryptException(MSG_NO_KEY)
+            if (tagSize < 16 || tagSize > MAX_QMC_TRAILER_LEN || audioLen < 0) {
+                invalid("QMC 尾部元数据长度非法")
+            }
             val mediaName = try { readMusicExName(raf, fileSize, tagSize) } catch (_: Exception) { "" }
             val names = if (mediaName.isNotEmpty()) listOf(mediaName) else emptyList()
             return QmcFooter(audioLen, null, needsExternalKey = true, externalNames = names)
         }
         // numeric: last 4 bytes (LE) = embedded raw-key (base64 EKey) length
         val keyLen = le32(tail, 0)
-        if (keyLen in 1..0xFFFF && keyLen < fileSize - 4) {
+        if (keyLen in 1..MAX_QMC_EKEY_LEN.toLong() && keyLen < fileSize - 4) {
             val audioLen = fileSize - 4 - keyLen
             val ekey = ByteArray(keyLen.toInt())
             raf.seek(audioLen)
@@ -581,8 +664,11 @@ object MusicDecoder {
             data[o + 2] == 'a'.code.toByte() && data[o + 3] == 'g'.code.toByte()) {
             if (size < 8) throw DecryptException(MSG_NO_KEY)
             val metaLen = be32(data, size - 8)
+            if (metaLen < 0 || metaLen > MAX_QMC_TRAILER_LEN) {
+                invalid("QMC 尾部元数据长度非法")
+            }
             val audioLen = size - 8 - metaLen
-            if (audioLen < 0 || metaLen < 0) throw DecryptException(MSG_NO_KEY)
+            if (audioLen < 0) invalid("QMC 尾部元数据长度非法")
             val items = String(data, audioLen, metaLen, Charsets.ISO_8859_1).split(",")
             if (items.isEmpty() || items[0].isEmpty()) throw DecryptException(MSG_NO_KEY)
             return QmcFooter(audioLen.toLong(), items[0].toByteArray(Charsets.ISO_8859_1))
@@ -591,18 +677,24 @@ object MusicDecoder {
             data[o + 2] == 'a'.code.toByte() && data[o + 3] == 'g'.code.toByte()) {
             if (size < 8) throw DecryptException(MSG_NO_KEY)
             val metaLen = be32(data, size - 8)
+            if (metaLen < 0 || metaLen > MAX_QMC_TRAILER_LEN) {
+                invalid("QMC 尾部元数据长度非法")
+            }
             val audioLen = size - 8 - metaLen
-            if (audioLen < 0) throw DecryptException(MSG_NO_KEY)
+            if (audioLen < 0) invalid("QMC 尾部元数据长度非法")
             return QmcFooter(audioLen.toLong(), null, needsExternalKey = true)
         }
         if (data[o] == 'c'.code.toByte() && data[o + 1] == 'e'.code.toByte() &&
             data[o + 2] == 'x'.code.toByte() && data[o + 3] == 0.toByte()) {
             if (size < 16) throw DecryptException(MSG_NO_KEY)
-            val tagSize = le32(data, size - 16).toInt()
-            val audioLen = size - tagSize
-            if (tagSize < 16 || audioLen < 0) throw DecryptException(MSG_NO_KEY)
-            val nameOff = size - tagSize + 0x48
-            val mediaName = if (nameOff in 0 until size) {
+            val tagSize = le32(data, size - 16)
+            val audioLen = size.toLong() - tagSize
+            if (tagSize < 16 || tagSize > MAX_QMC_TRAILER_LEN || audioLen < 0) {
+                invalid("QMC 尾部元数据长度非法")
+            }
+            val nameOffLong = size.toLong() - tagSize + 0x48
+            val mediaName = if (nameOffLong >= 0 && nameOffLong < size.toLong()) {
+                val nameOff = nameOffLong.toInt()
                 val sb = StringBuilder()
                 var i = nameOff
                 val limit = (size - 16).coerceAtMost(nameOff + 100)
@@ -617,7 +709,7 @@ object MusicDecoder {
             return QmcFooter(audioLen.toLong(), null, needsExternalKey = true, externalNames = names)
         }
         val keyLen = le32(data, o)
-        if (keyLen in 1..0xFFFF && keyLen < size - 4) {
+        if (keyLen in 1..MAX_QMC_EKEY_LEN.toLong() && keyLen < size - 4) {
             val audioLen = size - 4 - keyLen.toInt()
             val ekey = data.copyOfRange(audioLen, size - 4)
             return QmcFooter(audioLen.toLong(), trimTrailingNul(ekey))
@@ -802,8 +894,11 @@ object MusicDecoder {
     )
     private val V2_PREFIX = "QQMusic EncV2,Key:".toByteArray(Charsets.ISO_8859_1)
 
-    private fun base64Decode(b: ByteArray): ByteArray =
+    private fun base64Decode(b: ByteArray): ByteArray = try {
         android.util.Base64.decode(b, android.util.Base64.DEFAULT)
+    } catch (_: Exception) {
+        invalid("QQ 音乐密钥格式无效")
+    }
 
     private fun deriveKey(rawKey: ByteArray): ByteArray {
         var dec = base64Decode(rawKey)
@@ -956,6 +1051,7 @@ object MusicDecoder {
     private fun decryptTM(data: ByteArray): DecryptResult {
         val out = data.copyOf()
         if (out.size >= 4 && TM_MAGIC.indices.all { out[it] == TM_MAGIC[it] }) {
+            if (out.size < TM_REPLACE_HEADER.size) throw DecryptException("TM 文件头过短")
             System.arraycopy(TM_REPLACE_HEADER, 0, out, 0, 8)
         }
         return DecryptResult(out, detectAudioFormat(out))
@@ -1024,6 +1120,7 @@ object MusicDecoder {
         if (!matchMagic(data, KGM_MAGIC) && !matchMagic(data, VPR_MAGIC))
             throw DecryptException("不是有效的 KGM/VPR 文件")
         val (cipher, audioOffset) = kgmCipher(data)
+        validateKgmAudioOffset(audioOffset, data.size.toLong())
         val audio = data.copyOfRange(audioOffset.toInt(), data.size)
         cipher.decrypt(audio, 0, audio.size, 0L)
         return DecryptResult(audio, detectAudioFormat(audio))
@@ -1112,7 +1209,7 @@ object MusicDecoder {
             }
 
             return when (fmt) {
-                EncryptedFormat.NCM -> decryptNCMStream(raf, outputPath, header)
+                EncryptedFormat.NCM -> decryptNCMStream(raf, outputPath)
                 EncryptedFormat.QMC -> decryptQMCStream(raf, outputPath, filename, ekeyResolver)
                 EncryptedFormat.TM -> decryptTMStream(raf, outputPath, header)
                 EncryptedFormat.KGM, EncryptedFormat.VPR -> decryptKGMStream(raf, outputPath, header)
@@ -1129,59 +1226,46 @@ object MusicDecoder {
 
     private fun decryptNCMStream(
         raf: RandomAccessFile,
-        outputPath: String,
-        header: ByteArray
+        outputPath: String
     ): AudioFormat {
         // NCM header is too large to fit in 8KB, so parse it from the file directly
         // raf position is at 0 after rewind in decryptFile
         raf.seek(10L) // skip magic(8) + padding(2)
 
         // Key length (4B LE)
-        val keyLenBuf = ByteArray(4)
-        raf.readFully(keyLenBuf)
-        val keyLen = (keyLenBuf[0].toInt() and 0xFF) or
-                ((keyLenBuf[1].toInt() and 0xFF) shl 8) or
-                ((keyLenBuf[2].toInt() and 0xFF) shl 16) or
-                ((keyLenBuf[3].toInt() and 0xFF) shl 24)
+        val keyLen = readBoundedLeU32(raf, MAX_NCM_KEY_LEN, false, "NCM 密钥长度非法")
+        requireFileRange(raf.length(), raf.filePointer, keyLen.toLong(), "NCM 密钥数据不完整")
 
         // Read key data, XOR with 0x64, AES-128-ECB decrypt
         val rawKey = ByteArray(keyLen)
         raf.readFully(rawKey)
         for (i in rawKey.indices) rawKey[i] = (rawKey[i].toInt() xor 0x64).toByte()
-        val decryptedKey = aes128EcbDecrypt(rawKey)
+        val decryptedKey = try {
+            aes128EcbDecrypt(rawKey)
+        } catch (_: Exception) {
+            invalid("NCM 密钥数据损坏")
+        }
+        if (decryptedKey.size <= 17) invalid("NCM 密钥数据损坏")
 
         // buildKeyBox with bytes 17+
         val keyBox = buildKeyBox(decryptedKey.copyOfRange(17, decryptedKey.size))
 
         // Metadata length (4B LE)
-        val metaLenBuf = ByteArray(4)
-        raf.readFully(metaLenBuf)
-        val metaLen = (metaLenBuf[0].toInt() and 0xFF) or
-                ((metaLenBuf[1].toInt() and 0xFF) shl 8) or
-                ((metaLenBuf[2].toInt() and 0xFF) shl 16) or
-                ((metaLenBuf[3].toInt() and 0xFF) shl 24)
-        if (metaLen > 0) raf.skipBytes(metaLen)
+        val metaLen = readBoundedLeU32(raf, MAX_NCM_META_LEN, true, "NCM 元数据长度非法")
+        if (metaLen > 0) skipFully(raf, metaLen.toLong(), "NCM 元数据不完整")
 
         // CRC32 (4B) + image version (1B)
-        raf.skipBytes(5)
+        skipFully(raf, 5, "NCM 头部不完整")
 
         // Cover frame length (4B LE)
-        val coverLenBuf = ByteArray(4)
-        raf.readFully(coverLenBuf)
-        val coverFrameLen = (coverLenBuf[0].toInt() and 0xFF) or
-                ((coverLenBuf[1].toInt() and 0xFF) shl 8) or
-                ((coverLenBuf[2].toInt() and 0xFF) shl 16) or
-                ((coverLenBuf[3].toInt() and 0xFF) shl 24)
+        val coverFrameLen = readBoundedLeU32(
+            raf, MAX_NCM_COVER_FRAME_LEN, true, "NCM 封面长度非法"
+        )
 
         // Image length (4B LE)
-        val imgLenBuf = ByteArray(4)
-        raf.readFully(imgLenBuf)
-        val imgLen = (imgLenBuf[0].toInt() and 0xFF) or
-                ((imgLenBuf[1].toInt() and 0xFF) shl 8) or
-                ((imgLenBuf[2].toInt() and 0xFF) shl 16) or
-                ((imgLenBuf[3].toInt() and 0xFF) shl 24)
-        if (imgLen > 0) raf.skipBytes(imgLen)
-        raf.skipBytes(coverFrameLen - imgLen)
+        val imgLen = readBoundedLeU32(raf, MAX_NCM_IMAGE_LEN, true, "NCM 图片长度非法")
+        val coverSkip = ncmCoverSkipLength(coverFrameLen, imgLen)
+        if (coverSkip > 0) skipFully(raf, coverSkip.toLong(), "NCM 封面数据不完整")
 
         // Now raf is at audio data start — stream decrypt with keyBox
         return streamKeyBoxAndDetect(raf, outputPath, keyBox)
@@ -1316,6 +1400,7 @@ object MusicDecoder {
         if (!matchMagic(header, KGM_MAGIC) && !matchMagic(header, VPR_MAGIC))
             throw DecryptException("不是有效的 KGM/VPR 文件")
         val (cipher, audioOffset) = kgmCipher(header)
+        validateKgmAudioOffset(audioOffset, raf.length())
         raf.seek(audioOffset)
         return streamCipher(raf, outputPath) { buf, n, off -> cipher.decrypt(buf, 0, n, off) }
     }
@@ -1327,6 +1412,7 @@ object MusicDecoder {
         outputPath: String,
         header: ByteArray
     ): AudioFormat {
+        if (raf.length() < KWM_HEADER) throw DecryptException("KWM 文件过短")
         val cipher = kwmCipher(header)
         raf.seek(KWM_HEADER.toLong())
         return streamCipher(raf, outputPath) { buf, n, off -> cipher.decrypt(buf, 0, n, off) }

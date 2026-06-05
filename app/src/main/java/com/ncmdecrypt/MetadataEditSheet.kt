@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentManager
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
@@ -81,12 +82,52 @@ class MetadataEditSheet : BottomSheetDialogFragment() {
 
     private fun onCoverPicked(uri: Uri) {
         val bytes = try {
-            requireContext().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            BoundedInput.readBytes(requireContext().contentResolver, uri, MAX_COVER_INPUT_BYTES)
+        } catch (_: InputTooLargeException) {
+            Toast.makeText(
+                requireContext(),
+                getString(R.string.cover_import_too_large, MAX_COVER_INPUT_MB),
+                Toast.LENGTH_LONG
+            ).show()
+            return
         } catch (_: Exception) {
-            null
-        } ?: return
+            Toast.makeText(requireContext(), R.string.cover_import_invalid, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        val pixels = width.toLong() * height.toLong()
+        if (width <= 0 || height <= 0 || width > MAX_COVER_DIMENSION ||
+            height > MAX_COVER_DIMENSION || pixels > MAX_COVER_PIXELS
+        ) {
+            Toast.makeText(requireContext(), R.string.cover_import_invalid, Toast.LENGTH_LONG).show()
+            return
+        }
+
         pendingCover = bytes
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { coverView.setImageBitmap(it) }
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = coverSampleSize(width, height)
+        }
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        if (bitmap != null) {
+            coverView.setImageBitmap(bitmap)
+        } else {
+            pendingCover = null
+            Toast.makeText(requireContext(), R.string.cover_import_invalid, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun coverSampleSize(width: Int, height: Int): Int {
+        var sample = 1
+        while (width / sample > MAX_COVER_DISPLAY_DIMENSION ||
+            height / sample > MAX_COVER_DISPLAY_DIMENSION
+        ) {
+            sample *= 2
+        }
+        return sample
     }
 
     companion object {
@@ -95,6 +136,11 @@ class MetadataEditSheet : BottomSheetDialogFragment() {
         private const val ARG_ARTIST = "artist"
         private const val ARG_ALBUM = "album"
         private const val ARG_COVER = "cover"
+        private const val MAX_COVER_INPUT_MB = 20
+        private const val MAX_COVER_INPUT_BYTES = MAX_COVER_INPUT_MB * 1024L * 1024L
+        private const val MAX_COVER_DIMENSION = 8192
+        private const val MAX_COVER_DISPLAY_DIMENSION = 1024
+        private const val MAX_COVER_PIXELS = 24_000_000L
 
         fun show(fm: FragmentManager, index: Int, track: Track) {
             MetadataEditSheet().apply {

@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
-import android.provider.Settings
 import android.view.View
 import android.widget.ImageButton
 import android.widget.TextView
@@ -42,10 +41,10 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     private lateinit var emptyState: View
     private lateinit var playerUi: PlayerUiController
 
-    /** Set true once we've asked for storage access this session (so we don't nag on every decrypt). */
-    private var storagePromptShown = false
-    /** When the user goes to grant access, resume the decrypt run on return. */
-    private var startDecryptWhenGranted = false
+    /** Set true once we've asked for legacy write access this session (so we don't nag). */
+    private var legacyWritePromptShown = false
+    /** When the legacy permission sheet returns, resume the decrypt run. */
+    private var startDecryptAfterLegacyGrant = false
 
     private val adapter = FileListAdapter(this, this)
     private val tracks = HashMap<Int, Track>()      // adapter position -> decrypted Track
@@ -55,7 +54,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     private var decryptSuccess = 0
     private var decryptFailed = 0
     /** Per-run save outcomes, used to pick an accurate "where did it go" toast. */
-    private var anyMediaStoreFallback = false   // landed in MediaStore Music/FreeNote (Q+ fallback)
+    private var anyMediaStoreOutput = false     // landed in MediaStore Music/FreeNote (Q+ default)
     private var anyCacheOnly = false            // no public copy at all (e.g. <Q without write grant)
 
     // ACTION_OPEN_DOCUMENT (SAF) routes to the system DocumentsUI ("Files"), which supports
@@ -80,15 +79,10 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         ActivityResultContracts.RequestPermission()
     ) { /* playback works regardless; the notification just won't show if denied */ }
 
-    // Returning from the "All files access" settings screen (Android 11+).
-    private val allFilesAccessLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { resumeDecryptAfterPermission() }
-
-    // Legacy WRITE_EXTERNAL_STORAGE runtime grant (Android 10 and below).
+    // Legacy WRITE_EXTERNAL_STORAGE runtime grant (Android 9 and below).
     private val writeStoragePermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { resumeDecryptAfterPermission() }
+    ) { resumeDecryptAfterLegacyPermission() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -193,22 +187,23 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                 }
                 val finalTitle = title.ifBlank { track.title }
                 val finalArtist = artist.ifBlank { getString(R.string.unknown_artist) }
+                var publicSyncFailed = false
                 track.mediaStoreUri?.let {
-                    mirrorToMediaStore(Uri.parse(it), file, finalTitle, finalArtist, album)
+                    if (!mirrorToMediaStore(Uri.parse(it), file, finalTitle, finalArtist, album)) {
+                        publicSyncFailed = true
+                    }
                 }
-                // Re-sync the public FreeNote copy with the freshly-tagged audio. Storage access can
-                // be revoked between decrypt and edit, so re-check and surface a failure rather than
-                // silently leaving the public file stale while claiming success.
+                // Re-sync the legacy direct-path copy with the freshly-tagged audio. Storage access
+                // can be revoked between decrypt and edit, so re-check and surface a failure rather
+                // than silently leaving the public file stale while claiming success.
                 track.publicPath?.let { path ->
-                    val resynced = canWritePublicStorage() && runCatching {
+                    val resynced = canWriteLegacyPublicStorage() && runCatching {
                         val pub = File(path)
                         copyFile(file, pub)
                         MediaScannerConnection.scanFile(this, arrayOf(pub.absolutePath), null, null)
                         true
                     }.getOrDefault(false)
-                    if (!resynced) runOnUiThread {
-                        Toast.makeText(this, R.string.resync_failed, Toast.LENGTH_SHORT).show()
-                    }
+                    if (!resynced) publicSyncFailed = true
                 }
                 val newTrack = track.copy(
                     title = finalTitle,
@@ -221,7 +216,8 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                     adapter.refresh(index)
                     val qIdx = queuePositions.indexOf(index)
                     if (qIdx >= 0) PlayerHub.replaceTrack(qIdx, newTrack)
-                    Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show()
+                    val message = if (publicSyncFailed) R.string.resync_failed else R.string.saved
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -244,19 +240,22 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
 
     private fun mirrorToMediaStore(
         uri: Uri, file: File, title: String, artist: String, album: String
-    ) {
-        try {
-            contentResolver.openOutputStream(uri, "wt")?.use { out ->
+    ): Boolean {
+        return try {
+            val wrote = contentResolver.openOutputStream(uri, "wt")?.use { out ->
                 file.inputStream().use { it.copyTo(out) }
-            }
+                true
+            } ?: false
+            if (!wrote) return false
             val cv = ContentValues().apply {
                 put(MediaStore.MediaColumns.TITLE, title)
                 put(MediaStore.Audio.Media.ARTIST, artist)
                 put(MediaStore.Audio.Media.ALBUM, album)
             }
             contentResolver.update(uri, cv, null, null)
+            true
         } catch (_: Exception) {
-            // MediaStore mirror is best-effort; the cache file (used for playback) is updated.
+            false
         }
     }
 
@@ -279,21 +278,35 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
 
     private fun importKeys(uri: Uri) {
         Thread {
+            var tooLarge = false
             val added = try {
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                if (bytes == null) -1 else EkeyStore.importFrom(this, bytes)
+                val bytes = BoundedInput.readBytes(contentResolver, uri, MAX_KEY_IMPORT_BYTES)
+                EkeyStore.importFrom(this, bytes)
+            } catch (_: InputTooLargeException) {
+                tooLarge = true
+                -1
             } catch (e: Exception) {
                 -1
             }
             runOnUiThread {
-                if (added >= 0) {
-                    Toast.makeText(
-                        this,
-                        getString(R.string.keys_imported, added, EkeyStore.count()),
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    Toast.makeText(this, R.string.keys_import_failed, Toast.LENGTH_LONG).show()
+                when {
+                    added >= 0 -> {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.keys_imported, added, EkeyStore.count()),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    tooLarge -> {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.keys_import_too_large, MAX_KEY_IMPORT_MB),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    else -> {
+                        Toast.makeText(this, R.string.keys_import_failed, Toast.LENGTH_LONG).show()
+                    }
                 }
                 updateKeyCount()
             }
@@ -387,63 +400,33 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         return uri.lastPathSegment?.substringAfterLast('/')
     }
 
-    // ── Storage permission gate (for the public FreeNote output folder) ──
+    // ── Storage permission gate (legacy Android 9 and below only) ──
 
-    /** True when we can write directly to /sdcard/FreeNote via the File API. */
-    private fun canWritePublicStorage(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
+    private fun needsLegacyWritePermission(): Boolean =
+        Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+
+    /** True when we can write directly to /sdcard/FreeNote via the File API on legacy Android. */
+    private fun canWriteLegacyPublicStorage(): Boolean =
+        Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
-                PackageManager.PERMISSION_GRANTED
-        }
+            PackageManager.PERMISSION_GRANTED
 
-    /** Entry point for the "全部解密" button: ask for storage access once, then decrypt. */
+    /** Entry point for the "全部解密" button: request only legacy write access when needed. */
     private fun onDecryptClicked() {
-        if (!canWritePublicStorage() && !storagePromptShown) {
-            storagePromptShown = true
-            showStoragePermissionDialog()
+        if (needsLegacyWritePermission() && !legacyWritePromptShown) {
+            legacyWritePromptShown = true
+            startDecryptAfterLegacyGrant = true
+            writeStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else {
             startDecryptAll()
         }
     }
 
-    private fun showStoragePermissionDialog() {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.storage_permission_title)
-            .setMessage(R.string.storage_permission_message)
-            .setPositiveButton(R.string.action_grant) { _, _ ->
-                startDecryptWhenGranted = true
-                requestPublicStorageAccess()
-            }
-            .setNegativeButton(R.string.action_skip) { _, _ -> startDecryptAll() }
-            .setOnCancelListener { startDecryptAll() }
-            .show()
-    }
-
-    private fun requestPublicStorageAccess() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val intent = try {
-                Intent(
-                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            } catch (_: Exception) {
-                Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-            }
-            try {
-                allFilesAccessLauncher.launch(intent)
-            } catch (_: Exception) {
-                allFilesAccessLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-            }
-        } else {
-            writeStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        }
-    }
-
-    private fun resumeDecryptAfterPermission() {
-        if (startDecryptWhenGranted) {
-            startDecryptWhenGranted = false
+    private fun resumeDecryptAfterLegacyPermission() {
+        if (startDecryptAfterLegacyGrant) {
+            startDecryptAfterLegacyGrant = false
             startDecryptAll()
         }
     }
@@ -460,7 +443,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         pendingDecrypt = adapter.itemCount
         decryptSuccess = 0
         decryptFailed = 0
-        anyMediaStoreFallback = false
+        anyMediaStoreOutput = false
         anyCacheOnly = false
         progressBar.max = pendingDecrypt
         progressBar.setProgressCompat(0, false)
@@ -516,7 +499,9 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                     }
                 } ?: run {
                     runOnUiThread {
-                        adapter.updateStatus(index, FileStatus.FAILED)
+                        adapter.updateStatus(
+                            index, FileStatus.FAILED, getString(R.string.error_read_failed)
+                        )
                         decryptFailed++
                         progressBar.setProgressCompat(progressBar.progress + 1, true)
                         decryptNext(index + 1)
@@ -565,7 +550,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                     }
                 }
             } catch (e: Exception) {
-                val detail = if (e is DecryptException) e.message else null
+                val detail = safeDecryptError(e)
                 runOnUiThread {
                     adapter.updateStatus(index, FileStatus.FAILED, detail)
                     decryptFailed++
@@ -579,6 +564,14 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         }.start()
     }
 
+    private fun safeDecryptError(e: Exception): String {
+        val message = if (e is DecryptException) e.message else null
+        return message
+            ?.takeIf { it.isNotBlank() }
+            ?.take(MAX_ERROR_DETAIL_CHARS)
+            ?: getString(R.string.error_decrypt_failed)
+    }
+
     private fun onDecryptAllComplete() {
         progressBar.visibility = View.GONE
         decryptAllButton.isEnabled = true
@@ -587,7 +580,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         if (decryptSuccess > 0) {
             val msg = when {
                 anyCacheOnly -> R.string.saved_cache_only
-                anyMediaStoreFallback -> R.string.saved_to_fallback
+                anyMediaStoreOutput -> R.string.saved_to_music_folder
                 else -> R.string.saved_to_folder
             }
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
@@ -595,7 +588,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     }
 
     /** Where a decrypted file ended up: the cached playable copy plus the public copy (one of
-     *  [publicPath] = direct /sdcard/FreeNote file, or [mediaStoreUri] = MediaStore fallback). */
+     *  [mediaStoreUri] = MediaStore Music/FreeNote, or [publicPath] = legacy direct path). */
     private class SaveResult(
         val cacheFile: File,
         val publicPath: String?,
@@ -603,9 +596,9 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     )
 
     /**
-     * Saves the decrypted audio: the public copy goes to the FreeNote folder under shared storage
-     * (direct File write when "All files access" is granted; otherwise MediaStore "Music/FreeNote"
-     * as a fallback), plus a cache copy used for in-app playback and FileProvider sharing.
+     * Saves the decrypted audio: Android 10+ writes the public copy through MediaStore under
+     * Music/FreeNote, legacy Android writes directly to /sdcard/FreeNote when WRITE permission is
+     * granted, and every successful decrypt gets a cache copy for playback/FileProvider sharing.
      */
     private fun saveDecrypted(
         originalName: String,
@@ -621,8 +614,15 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         var publicPath: String? = null
         var mediaStoreUri: String? = null
 
-        // 1) Preferred: direct write to /sdcard/FreeNote.
-        if (canWritePublicStorage()) {
+        // 1) Preferred on public releases: MediaStore Music/FreeNote, no broad storage permission.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            mediaStoreUri = saveViaMediaStore(outputName, mime, decryptedFile)
+        }
+
+        // 2) Legacy Android 9 and below: direct write to /sdcard/FreeNote when permitted.
+        if (mediaStoreUri == null && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            canWriteLegacyPublicStorage()
+        ) {
             try {
                 val dir = File(Environment.getExternalStorageDirectory(), getString(R.string.output_folder))
                 if (dir.exists() || dir.mkdirs()) {
@@ -637,15 +637,10 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
             }
         }
 
-        // 2) Fallback when access wasn't granted: MediaStore Music/FreeNote (no special permission).
-        if (publicPath == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            mediaStoreUri = saveViaMediaStore(outputName, mime, decryptedFile)
-        }
-
         // Record the actual outcome so the completion toast is truthful about where files landed.
         when {
-            publicPath != null -> { /* direct /sdcard/FreeNote — best case */ }
-            mediaStoreUri != null -> anyMediaStoreFallback = true
+            mediaStoreUri != null -> anyMediaStoreOutput = true
+            publicPath != null -> { /* legacy direct /sdcard/FreeNote */ }
             else -> anyCacheOnly = true   // no public copy (e.g. <Q with write denied)
         }
 
@@ -664,13 +659,16 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
             put(MediaStore.MediaColumns.DISPLAY_NAME, outputName)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
             put(MediaStore.MediaColumns.RELATIVE_PATH, relPath)
+            put(MediaStore.Audio.Media.IS_MUSIC, 1)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: return null
         return try {
-            contentResolver.openOutputStream(uri)?.use { stream ->
+            val copied = contentResolver.openOutputStream(uri)?.use { stream ->
                 src.inputStream().use { it.copyTo(stream) }
-            }
+                true
+            } ?: false
+            if (!copied) throw IllegalStateException("MediaStore output unavailable")
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             contentResolver.update(uri, values, null, null)
@@ -705,5 +703,11 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         ".aac" -> "audio/aac"
         ".ape" -> "audio/ape"
         else -> "audio/*"
+    }
+
+    companion object {
+        private const val MAX_KEY_IMPORT_MB = 16
+        private const val MAX_KEY_IMPORT_BYTES = MAX_KEY_IMPORT_MB * 1024L * 1024L
+        private const val MAX_ERROR_DETAIL_CHARS = 96
     }
 }

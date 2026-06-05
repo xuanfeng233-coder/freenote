@@ -85,4 +85,7 @@ dependencies {
 
     // Audio metadata (tag) read/write for FLAC / MP3 / OGG / M4A.
     implementation("net.jthink:jaudiotagger:3.0.1")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

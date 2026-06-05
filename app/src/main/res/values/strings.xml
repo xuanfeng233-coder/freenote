@@ -14,6 +14,7 @@
     <string name="import_keys">导入密钥</string>
     <string name="import_keys_n">密钥 (%1$d)</string>
     <string name="keys_imported">已导入 %1$d 个密钥（共 %2$d 个）</string>
+    <string name="keys_import_too_large">密钥文件过大（上限 %1$d MB）</string>
     <string name="keys_import_failed">密钥导入失败：无法识别文件（支持 QQ音乐 MMKV / JSON / 文本）</string>
 
     <!-- Status messages -->
@@ -29,6 +30,8 @@
     <!-- Errors -->
     <string name="error_open_failed">无法打开播放器</string>
     <string name="error_share_failed">无法分享文件</string>
+    <string name="error_read_failed">无法读取文件</string>
+    <string name="error_decrypt_failed">文件损坏或暂不支持</string>
     <string name="error_unknown_audio">无法识别解密后的音频格式（可能密钥错误或暂不支持该格式）</string>
 
     <!-- Content descriptions (accessibility) -->
@@ -61,13 +64,9 @@
     <!-- Output folder + storage permission -->
     <string name="output_folder">FreeNote</string>
     <string name="saved_to_folder">已保存到 /sdcard/FreeNote</string>
-    <string name="saved_to_fallback">已保存到 音乐/FreeNote（未授予「所有文件访问」权限）</string>
-    <string name="saved_cache_only">已保存到应用缓存（未授予存储权限，无法写入公开目录）</string>
-    <string name="resync_failed">同步到 FreeNote 失败（存储权限可能已撤销）</string>
-    <string name="storage_permission_title">需要存储权限</string>
-    <string name="storage_permission_message">为把解密后的音频保存到 /sdcard/FreeNote 文件夹，需要授予「所有文件访问」权限。\n\n若不授予，文件将改存到「音乐/FreeNote」（可在音乐 App 中找到）。</string>
-    <string name="action_grant">去授权</string>
-    <string name="action_skip">暂不</string>
+    <string name="saved_to_music_folder">已保存到 音乐/FreeNote</string>
+    <string name="saved_cache_only">已保存到应用缓存（未授予旧版存储权限，无法写入公开目录）</string>
+    <string name="resync_failed">已保存到本地播放文件，公开副本同步失败</string>
 
     <!-- Metadata editor -->
     <string name="edit_metadata">编辑信息</string>
@@ -75,6 +74,8 @@
     <string name="field_artist">艺术家</string>
     <string name="field_album">专辑</string>
     <string name="change_cover">更换封面</string>
+    <string name="cover_import_too_large">封面图片过大（上限 %1$d MB）</string>
+    <string name="cover_import_invalid">封面图片无法识别或尺寸过大</string>
     <string name="action_save">保存</string>
     <string name="action_cancel">取消</string>
     <string name="saving">保存中…</string>

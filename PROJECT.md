@@ -8,19 +8,37 @@ and execution guide, not an implementation diff.
 
 ## Current Status
 
-Last updated: 2026-06-05
+Last updated: 2026-06-06
 
 - Phase 1 code is complete.
-- Phase 1 automated validation passed:
+- Phase 2 code is complete.
+- Phase 3 code is complete.
+- Phase 4 initial JVM coverage is in progress:
+  - Added focused unit tests for filename sanitization, imported EKey parsing,
+    QMC footer handling, malformed header bounds, and audio format detection.
+  - Fixed two issues found by the new tests: MP3 frame-header detection now treats
+    header bytes as unsigned, and line-based EKey import now handles comma
+    separators when the base64 value ends with `=` padding.
+- Latest Phase 4 automated validation passed:
+  - `./gradlew :app:testDebugUnitTest` (15 tests)
+- Previous full automated validation passed:
   - `./gradlew :app:assembleDebug`
   - `./gradlew :app:lintDebug`
-  - `./gradlew :app:testDebugUnitTest` (`NO-SOURCE` until Phase 4 adds tests)
   - `./gradlew :app:assembleRelease`
+- The merged release manifest no longer declares `MANAGE_EXTERNAL_STORAGE`,
+  `READ_EXTERNAL_STORAGE`, `READ_MEDIA_AUDIO`, or
+  `android:requestLegacyExternalStorage`; legacy `WRITE_EXTERNAL_STORAGE` is
+  limited to Android 9 and below.
 - Debug APK signing was verified with `apksigner`; the signer is
   `CN=Android Debug`.
-- Real-device smoke testing is still pending because no ADB device was attached:
-  in-app playback, notification controls, and lock-screen controls.
-- Next planned work: Phase 2 public-release storage compliance.
+- Real-device smoke testing has started on a Vivo V2121A running Android 13
+  (API 33): the release APK installed over the existing signed package and
+  cold-launched successfully. End-to-end decrypt testing is still pending
+  because no encrypted sample files were present on shared storage: in-app
+  playback, notification controls, lock-screen controls, Android 10+ MediaStore
+  output visibility, and metadata edit/resync.
+- Next planned work: Phase 4 codec-vector tests, full validation, and
+  dependency/lint cleanup.
 
 ## Goals
 
@@ -126,6 +144,11 @@ Acceptance:
 
 Objective: make storage behavior compatible with public app-store expectations.
 
+Status: code complete on 2026-06-05; automated validation passed; release APK
+installed and cold-launched on Android 13. Android 10+ MediaStore visibility and
+metadata-resync smoke testing remain pending until encrypted sample files are
+available on the device.
+
 ### Default Storage Model
 
 - Make MediaStore the default public-output path on Android 10+.
@@ -169,6 +192,9 @@ Acceptance:
 ## Phase 3: Robustness Against Malformed Inputs
 
 Objective: avoid crashes and memory pressure from malicious or malformed files.
+
+Status: code complete on 2026-06-05; automated validation passed. Focused
+malformed-input fixtures and codec regression tests remain for Phase 4.
 
 ### Bounded Imports
 
@@ -215,6 +241,27 @@ Acceptance:
 
 Objective: make future changes safe enough for long-term maintenance.
 
+Status: started on 2026-06-06; first JVM unit-test suite is complete and passing.
+
+### Implementation Tasks
+
+- [x] Add JVM unit-test dependencies and `app/src/test` structure.
+- [x] Expose the imported EKey parser through a narrow `internal` testable entry
+  while keeping runtime import behavior unchanged.
+- [x] Cover filename sanitizer edge cases: traversal fragments, reserved
+  characters, control characters, fallback names, Unicode, and length limits.
+- [x] Cover EKey import parsing for JSON, line-based text, and MMKV fixtures,
+  including MMKV last-write-wins and delete semantics.
+- [x] Cover QMC footer behavior for oversized metadata, negative audio length,
+  and musicex external-key candidate names.
+- [x] Cover malformed header bounds for NCM, QMC, KGM, and KWM without requiring
+  large allocations.
+- [x] Cover audio format detection and extension/magic tag detection.
+- [ ] Add codec vector tests only when known-good reference vectors are available
+  in the repo or supplied by a maintainer.
+- [ ] Re-run full release validation after the broader Phase 4 suite stabilizes:
+  `assembleDebug`, `lintDebug`, `testDebugUnitTest`, and `assembleRelease`.
+
 ### Unit Tests
 
 - Add JVM unit tests where Android framework dependencies are not required.
@@ -228,7 +275,7 @@ Objective: make future changes safe enough for long-term maintenance.
 
 Acceptance:
 
-- `./gradlew testDebugUnitTest` runs meaningful tests.
+- `./gradlew :app:testDebugUnitTest` runs meaningful tests.
 - New tests cover both success paths and malformed input failures.
 
 ### Instrumented or Manual Smoke Tests
@@ -240,6 +287,23 @@ Acceptance:
   - background playback, notification controls, and lock-screen controls;
   - metadata edit and resync;
   - sharing via FileProvider.
+
+Manual checklist:
+
+- [ ] On Android 10+, select multiple encrypted files through the system picker
+  and confirm the app retains access after background/foreground.
+- [ ] Decrypt one known-good NCM sample and one known-good QMC sample with an
+  embedded key.
+- [ ] Confirm decrypted output appears under `Music/FreeNote` in a system file
+  manager or music app.
+- [ ] Play a decrypted track in-app, then verify background playback,
+  notification controls, and lock-screen controls.
+- [ ] Edit title, artist, album, and cover; confirm playback cache and
+  MediaStore-backed public copy are resynced where possible.
+- [ ] Share a decrypted track and confirm the receiving app can open the
+  FileProvider URI.
+- [ ] Optional: try a QQ musicex/STag sample without imported keys and confirm a
+  clear no-key failure; import a matching MMKV/JSON/text key fixture and retry.
 
 Acceptance:
 
@@ -316,11 +380,12 @@ Run these after relevant phases:
 ```bash
 ./gradlew lintDebug
 ./gradlew assembleDebug
-./gradlew testDebugUnitTest
+./gradlew :app:testDebugUnitTest
 ./gradlew assembleRelease
 ```
 
-`testDebugUnitTest` becomes meaningful after Phase 4 adds test sources.
+`testDebugUnitTest` now runs Phase 4 JVM coverage. Add codec-vector tests only
+from known-good reference vectors.
 
 ## Current Known Audit Findings Mapped to Phases
 
@@ -331,6 +396,6 @@ Run these after relevant phases:
 - `MANAGE_EXTERNAL_STORAGE` public-release risk: Phase 2.
 - Temp files left after decrypt failures: Phase 1.
 - Unbounded `readBytes()` and decoder allocations: Phase 3.
-- No automated tests: Phase 4.
+- Initial automated tests added in Phase 4; broader codec vectors remain.
 - Broad ProGuard keep rules: Phase 4.
 - Local keystore/APK hygiene: Phase 5.

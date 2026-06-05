@@ -45,10 +45,10 @@
 
 1. 点 **「选择文件」** → 在系统文件选择器里挑要解密的歌曲（可一次多选）。
 2. 点 **「全部解密」** → 等进度跑完。
-3. 解密结果默认保存到手机的 **`/sdcard/FreeNote`** 文件夹。每首歌后面会出现 **播放 / 编辑标签 / 分享** 按钮。
+3. 解密结果默认保存到系统音乐目录 **`Music/FreeNote`**。每首歌后面会出现 **播放 / 编辑标签 / 分享** 按钮。
 
-> 首次解密会请求 **「所有文件访问」权限**（用于写入 `/sdcard/FreeNote`）。
-> 如果不授予，文件会改存到 **「音乐/FreeNote」**，可在系统音乐 App 里找到。
+> Android 10 及以上不需要授予特殊存储权限，文件可在系统音乐 App 或文件管理器的「音乐/FreeNote」中找到。
+> Android 9 及以下可能会请求旧版存储权限，用于写入 `/sdcard/FreeNote`。
 
 ## ⚠️ 重要：QQ音乐 / 酷狗 新版可能需要「版本回退」
 
@@ -198,6 +198,7 @@ SCORE_KEY = [0x68,0x7A,0x48,0x52,0x41,0x6D,0x73,0x6F,
 ```bash
 cd ncm-android
 ./gradlew assembleDebug      # → app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:testDebugUnitTest  # JVM unit tests for codec-adjacent pure logic
 ./gradlew assembleRelease    # → app/build/outputs/apk/release/app-release.apk
 ```
 

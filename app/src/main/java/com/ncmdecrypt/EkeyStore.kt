@@ -75,11 +75,13 @@ object EkeyStore {
     @Synchronized
     fun importFrom(context: Context, bytes: ByteArray): Int {
         val before = raw.size
-        val map = parseAny(bytes)
+        val map = parseImportedKeys(bytes)
         for ((name, ekey) in map) putInternal(name, ekey)
         save(context)
         return raw.size - before
     }
+
+    internal fun parseImportedKeys(bytes: ByteArray): Map<String, String> = parseAny(bytes)
 
     private fun parseAny(bytes: ByteArray): Map<String, String> {
         // 1) MMKV binary
@@ -107,8 +109,9 @@ object EkeyStore {
         for (line in text.lineSequence()) {
             val l = line.trim()
             if (l.isEmpty() || l.startsWith("#")) continue
-            val sepIdx = l.indexOfFirst { it == '\t' || it == '=' }
-                .let { if (it >= 0) it else l.lastIndexOf(',') }
+            val sepIdx = listOf(l.indexOf('\t'), l.indexOf('='), l.lastIndexOf(','))
+                .filter { it > 0 }
+                .minOrNull() ?: -1
             if (sepIdx <= 0) continue
             val name = l.substring(0, sepIdx).trim()
             val ekey = l.substring(sepIdx + 1).trim()
