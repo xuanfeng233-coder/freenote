@@ -43,9 +43,6 @@ android {
     }
 
     buildTypes {
-        debug {
-            if (hasKeystore) signingConfig = signingConfigs.getByName("braynlabs")
-        }
         release {
             isMinifyEnabled = true
             if (hasKeystore) signingConfig = signingConfigs.getByName("braynlabs")

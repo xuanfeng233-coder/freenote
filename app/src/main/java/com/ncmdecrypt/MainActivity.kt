@@ -468,8 +468,19 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         decryptAllButton.isEnabled = false
         selectFilesButton.isEnabled = false
         statusTextView.text = getString(R.string.status_decrypting, 0, pendingDecrypt)
+        cleanDecryptWorkDir()
 
         decryptNext(0)
+    }
+
+    private fun cleanDecryptWorkDir() {
+        val workDir = File(cacheDir, "decrypt_work")
+        if (workDir.exists()) {
+            workDir.listFiles()?.forEach { child ->
+                runCatching { child.deleteRecursively() }
+            }
+        }
+        workDir.mkdirs()
     }
 
     private fun decryptNext(index: Int) {
@@ -490,10 +501,13 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         workDir.mkdirs()
 
         Thread {
+            var encryptedTemp: File? = null
+            var decryptedTemp: File? = null
             try {
-                val encryptedTemp = File(workDir, "enc_${index}_${System.nanoTime()}")
+                val encryptedFile = File(workDir, "enc_${index}_${System.nanoTime()}")
+                encryptedTemp = encryptedFile
                 contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(encryptedTemp).use { output ->
+                    FileOutputStream(encryptedFile).use { output ->
                         val buf = ByteArray(65536)
                         var read: Int
                         while (input.read(buf).also { read = it } != -1) {
@@ -507,33 +521,30 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                         progressBar.setProgressCompat(progressBar.progress + 1, true)
                         decryptNext(index + 1)
                     }
-                    encryptedTemp.delete()
                     return@Thread
                 }
 
-                val decryptedTemp = File(workDir, "dec_${index}_${System.nanoTime()}")
+                val decryptedFile = File(workDir, "dec_${index}_${System.nanoTime()}")
+                decryptedTemp = decryptedFile
                 val audioFmt = MusicDecoder.decryptFile(
-                    encryptedTemp.absolutePath,
-                    decryptedTemp.absolutePath,
+                    encryptedFile.absolutePath,
+                    decryptedFile.absolutePath,
                     displayName,
                     MusicDecoder.EkeyResolver { names -> EkeyStore.resolve(names) }
                 )
 
-                if (audioFmt != AudioFormat.UNKNOWN && decryptedTemp.length() > 0) {
-                    val saved = saveDecrypted(displayName, decryptedTemp, audioFmt)
+                if (audioFmt != AudioFormat.UNKNOWN && decryptedFile.length() > 0) {
+                    val saved = saveDecrypted(displayName, decryptedFile, audioFmt)
                     // Build the playable Track while the encrypted source still exists (NCM
                     // metadata/cover lives in its header).
                     val track = TrackBuilder.build(
                         originalName = displayName,
-                        encryptedTempPath = encryptedTemp.absolutePath,
+                        encryptedTempPath = encryptedFile.absolutePath,
                         decryptedFile = saved.cacheFile,
                         mediaStoreUri = saved.mediaStoreUri,
                         formatTag = formatTag,
                         publicPath = saved.publicPath
                     )
-
-                    encryptedTemp.delete()
-                    decryptedTemp.delete()
 
                     runOnUiThread {
                         adapter.setResult(index, saved.cacheFile)
@@ -544,8 +555,6 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                         decryptNext(index + 1)
                     }
                 } else {
-                    encryptedTemp.delete()
-                    decryptedTemp.delete()
                     runOnUiThread {
                         adapter.updateStatus(
                             index, FileStatus.FAILED, getString(R.string.error_unknown_audio)
@@ -563,6 +572,9 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                     progressBar.progress = progressBar.progress + 1
                     decryptNext(index + 1)
                 }
+            } finally {
+                runCatching { encryptedTemp?.delete() }
+                runCatching { decryptedTemp?.delete() }
             }
         }.start()
     }
@@ -591,7 +603,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     )
 
     /**
-     * Saves the decrypted audio: the public copy goes to the FreeNote folder under internal storage
+     * Saves the decrypted audio: the public copy goes to the FreeNote folder under shared storage
      * (direct File write when "All files access" is granted; otherwise MediaStore "Music/FreeNote"
      * as a fallback), plus a cache copy used for in-app playback and FileProvider sharing.
      */
@@ -601,9 +613,9 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         audioFmt: AudioFormat
     ): SaveResult {
         val ext = extFor(audioFmt)
-        val baseName = originalName.substringBeforeLast(".")
+        val baseName = FilenameSanitizer.sanitizeBase(originalName.substringBeforeLast("."))
         val timestamp = SimpleDateFormat("_HHmmss", Locale.getDefault()).format(Date())
-        val outputName = "${baseName}解锁$timestamp$ext"
+        val outputName = FilenameSanitizer.sanitizeFileName("${baseName}解锁$timestamp$ext")
         val mime = getMimeType(ext)
 
         var publicPath: String? = null

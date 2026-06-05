@@ -96,7 +96,8 @@ object TrackBuilder {
 
     /** Writes cover bytes to "<audio>.cover" next to the cached file; returns its path or null. */
     fun writeCoverSidecar(audioFile: File, bytes: ByteArray): String? = try {
-        val sidecar = File(audioFile.parentFile, audioFile.name + ".cover")
+        val sidecarName = FilenameSanitizer.sanitizeFileName(audioFile.name + ".cover", "cover.cover")
+        val sidecar = File(audioFile.parentFile, sidecarName)
         sidecar.writeBytes(bytes)
         sidecar.absolutePath
     } catch (_: Exception) {
