@@ -66,7 +66,28 @@
     <string name="saved_to_folder">已保存到 /sdcard/FreeNote</string>
     <string name="saved_to_music_folder">已保存到 音乐/FreeNote</string>
     <string name="saved_cache_only">已保存到应用缓存（未授予旧版存储权限，无法写入公开目录）</string>
+    <string name="saved_to_custom_dir">已保存到所选文件夹</string>
     <string name="resync_failed">已保存到本地播放文件，公开副本同步失败</string>
+
+    <!-- Custom output directory (SAF) -->
+    <string name="output_dir_default">保存目录：默认</string>
+    <string name="output_dir_set">保存目录：%1$s</string>
+    <string name="output_dir_change">更换目录</string>
+    <string name="output_dir_reset">恢复默认</string>
+    <string name="output_dir_title">解密文件保存到</string>
+    <string name="cancel">取消</string>
+
+    <!-- Root key import (QQ Music MMKV) -->
+    <string name="root_import">Root 导入密钥</string>
+    <string name="root_import_confirm_title">通过 Root 导入密钥</string>
+    <string name="root_import_confirm_msg">将使用 Root 权限读取 QQ音乐 的本地密钥库（MMKV），仅在本机解析，不上传任何数据。继续？</string>
+    <string name="root_import_continue">继续</string>
+    <string name="root_import_running">正在通过 Root 导入…</string>
+    <string name="root_import_success">已从 QQ音乐 导入 %1$d 个密钥（共 %2$d）</string>
+    <string name="root_import_no_keys">未找到可用密钥（可能是加密版 vault）</string>
+    <string name="root_import_no_root">未检测到 Root</string>
+    <string name="root_import_denied">Root 授权被拒绝</string>
+    <string name="root_import_failed">Root 导入失败</string>
 
     <!-- Metadata editor -->
     <string name="edit_metadata">编辑信息</string>

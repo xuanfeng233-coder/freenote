@@ -19,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.documentfile.provider.DocumentFile
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
@@ -36,6 +37,8 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     private lateinit var selectFilesButton: MaterialButton
     private lateinit var decryptAllButton: MaterialButton
     private lateinit var importKeysButton: MaterialButton
+    private lateinit var outputDirButton: MaterialButton
+    private lateinit var rootImportButton: MaterialButton
     private lateinit var infoButton: ImageButton
     private lateinit var progressBar: LinearProgressIndicator
     private lateinit var emptyState: View
@@ -55,6 +58,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     private var decryptFailed = 0
     /** Per-run save outcomes, used to pick an accurate "where did it go" toast. */
     private var anyMediaStoreOutput = false     // landed in MediaStore Music/FreeNote (Q+ default)
+    private var anyCustomDirOutput = false      // landed in the user's custom SAF folder
     private var anyCacheOnly = false            // no public copy at all (e.g. <Q without write grant)
 
     // ACTION_OPEN_DOCUMENT (SAF) routes to the system DocumentsUI ("Files"), which supports
@@ -75,6 +79,21 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         uri?.let { importKeys(it) }
     }
 
+    private val outputDirPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            OutputDirStore.set(this, uri)
+            updateOutputDirLabel()
+        }
+    }
+
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* playback works regardless; the notification just won't show if denied */ }
@@ -93,6 +112,8 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         selectFilesButton = findViewById(R.id.selectFilesButton)
         decryptAllButton = findViewById(R.id.decryptAllButton)
         importKeysButton = findViewById(R.id.importKeysButton)
+        outputDirButton = findViewById(R.id.outputDirButton)
+        rootImportButton = findViewById(R.id.rootImportButton)
         infoButton = findViewById(R.id.infoButton)
         progressBar = findViewById(R.id.progressBar)
         emptyState = findViewById(R.id.emptyState)
@@ -122,8 +143,12 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         selectFilesButton.setOnClickListener { pickFiles() }
         decryptAllButton.setOnClickListener { onDecryptClicked() }
         importKeysButton.setOnClickListener { keyImporter.launch("*/*") }
+        outputDirButton.setOnClickListener { onOutputDirClicked() }
+        rootImportButton.visibility = if (RootHelper.isRootAvailable()) View.VISIBLE else View.GONE
+        rootImportButton.setOnClickListener { onRootImportClicked() }
         infoButton.setOnClickListener { showHelpDialog() }
         updateKeyCount()
+        updateOutputDirLabel()
     }
 
     override fun onDestroy() {
@@ -274,6 +299,63 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         val n = EkeyStore.count()
         importKeysButton.text = if (n > 0) getString(R.string.import_keys_n, n)
         else getString(R.string.import_keys)
+    }
+
+    private fun updateOutputDirLabel() {
+        val name = OutputDirStore.displayName(this)
+        outputDirButton.text = if (name != null) getString(R.string.output_dir_set, name)
+        else getString(R.string.output_dir_default)
+    }
+
+    private fun onOutputDirClicked() {
+        if (OutputDirStore.getTreeUri(this) == null) {
+            outputDirPicker.launch(null)
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.output_dir_title)
+            .setItems(
+                arrayOf(getString(R.string.output_dir_change), getString(R.string.output_dir_reset))
+            ) { _, which ->
+                when (which) {
+                    0 -> outputDirPicker.launch(null)
+                    1 -> { OutputDirStore.clear(this); updateOutputDirLabel() }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun onRootImportClicked() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.root_import_confirm_title)
+            .setMessage(R.string.root_import_confirm_msg)
+            .setPositiveButton(R.string.root_import_continue) { _, _ -> runRootImport() }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun runRootImport() {
+        Toast.makeText(this, R.string.root_import_running, Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = QqMusicKeyImporter.importEkeys(this)
+            runOnUiThread {
+                val msg = when (result) {
+                    is QqMusicKeyImporter.ImportResult.Success ->
+                        getString(R.string.root_import_success, result.added, result.total)
+                    is QqMusicKeyImporter.ImportResult.NoData ->
+                        getString(R.string.root_import_no_keys)
+                    is QqMusicKeyImporter.ImportResult.NoRoot ->
+                        getString(R.string.root_import_no_root)
+                    is QqMusicKeyImporter.ImportResult.RootDenied ->
+                        getString(R.string.root_import_denied)
+                    is QqMusicKeyImporter.ImportResult.Error ->
+                        getString(R.string.root_import_failed)
+                }
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                updateKeyCount()
+            }
+        }.start()
     }
 
     private fun importKeys(uri: Uri) {
@@ -444,6 +526,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         decryptSuccess = 0
         decryptFailed = 0
         anyMediaStoreOutput = false
+        anyCustomDirOutput = false
         anyCacheOnly = false
         progressBar.max = pendingDecrypt
         progressBar.setProgressCompat(0, false)
@@ -526,7 +609,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                         originalName = displayName,
                         encryptedTempPath = encryptedFile.absolutePath,
                         decryptedFile = saved.cacheFile,
-                        mediaStoreUri = saved.mediaStoreUri,
+                        mediaStoreUri = saved.mediaStoreUri ?: saved.customDirUri,
                         formatTag = formatTag,
                         publicPath = saved.publicPath
                     )
@@ -580,6 +663,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         if (decryptSuccess > 0) {
             val msg = when {
                 anyCacheOnly -> R.string.saved_cache_only
+                anyCustomDirOutput -> R.string.saved_to_custom_dir
                 anyMediaStoreOutput -> R.string.saved_to_music_folder
                 else -> R.string.saved_to_folder
             }
@@ -592,7 +676,8 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     private class SaveResult(
         val cacheFile: File,
         val publicPath: String?,
-        val mediaStoreUri: String?
+        val mediaStoreUri: String?,
+        val customDirUri: String?
     )
 
     /**
@@ -613,14 +698,21 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
 
         var publicPath: String? = null
         var mediaStoreUri: String? = null
+        var customDirUri: String? = null
+
+        // 0) User-chosen custom folder (SAF) takes priority on any Android version.
+        OutputDirStore.getTreeUri(this)?.let { tree ->
+            customDirUri = saveViaTreeUri(tree, outputName, mime, decryptedFile)
+        }
 
         // 1) Preferred on public releases: MediaStore Music/FreeNote, no broad storage permission.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (customDirUri == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             mediaStoreUri = saveViaMediaStore(outputName, mime, decryptedFile)
         }
 
         // 2) Legacy Android 9 and below: direct write to /sdcard/FreeNote when permitted.
-        if (mediaStoreUri == null && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+        if (customDirUri == null && mediaStoreUri == null &&
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             canWriteLegacyPublicStorage()
         ) {
             try {
@@ -639,6 +731,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
 
         // Record the actual outcome so the completion toast is truthful about where files landed.
         when {
+            customDirUri != null -> anyCustomDirOutput = true
             mediaStoreUri != null -> anyMediaStoreOutput = true
             publicPath != null -> { /* legacy direct /sdcard/FreeNote */ }
             else -> anyCacheOnly = true   // no public copy (e.g. <Q with write denied)
@@ -649,7 +742,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         val cacheFile = File(musicCacheDir, outputName)
         copyFile(decryptedFile, cacheFile)
 
-        return SaveResult(cacheFile, publicPath, mediaStoreUri)
+        return SaveResult(cacheFile, publicPath, mediaStoreUri, customDirUri)
     }
 
     /** Inserts [src] into MediaStore under Music/FreeNote (Android Q+). Returns its uri or null. */
@@ -675,6 +768,21 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
             uri.toString()
         } catch (_: Exception) {
             runCatching { contentResolver.delete(uri, null, null) }
+            null
+        }
+    }
+
+    /** Writes [src] into the user's chosen SAF tree. Returns the new document uri or null. */
+    private fun saveViaTreeUri(treeUri: Uri, outputName: String, mime: String, src: File): String? {
+        return try {
+            val dir = DocumentFile.fromTreeUri(this, treeUri) ?: return null
+            val doc = dir.createFile(mime, outputName) ?: return null
+            val ok = contentResolver.openOutputStream(doc.uri)?.use { out ->
+                src.inputStream().use { it.copyTo(out) }
+                true
+            } ?: false
+            if (ok) doc.uri.toString() else { runCatching { doc.delete() }; null }
+        } catch (_: Exception) {
             null
         }
     }
