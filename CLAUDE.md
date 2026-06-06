@@ -24,6 +24,9 @@ writes plain FLAC/MP3/OGG/etc.
 # Release build (signed only if keystore.properties + the .keystore exist; else unsigned)
 ./gradlew assembleRelease        # → app/build/outputs/apk/release/app-release.apk
 
+# Preferred release signing hygiene: keep signing files outside the repo.
+FREENOTE_KEYSTORE_PROPERTIES=/path/to/keystore.properties ./gradlew assembleRelease
+
 # JVM unit tests for codec-adjacent pure logic
 ./gradlew :app:testDebugUnitTest
 
@@ -40,8 +43,10 @@ adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk
   a real `.ncm` / `.qmc` / `.kgm` / `.kwm` to the phone, open it in the app, play the output.
 - Historic test device: Vivo/OPPO `3142621725000KW` (Android 14+). If `adb install` hangs,
   unlock the screen / confirm the on-device install dialog.
-- Signing: real keystore is **git-ignored** (`keystore.properties`, `*.keystore`). Copy
-  `keystore.properties.example` → `keystore.properties` to sign locally.
+- Signing: prefer keeping the real `keystore.properties` and keystore outside the repo, then
+  set `FREENOTE_KEYSTORE_PROPERTIES=/path/to/keystore.properties` or pass
+  `-PfreenoteKeystoreProperties=/path/to/keystore.properties`. Root-level
+  `keystore.properties` still works for local compatibility and remains git-ignored.
 
 ## Critical invariants — do not relearn these the hard way
 

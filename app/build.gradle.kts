@@ -1,3 +1,4 @@
+import java.io.File
 import java.io.FileInputStream
 import java.util.Properties
 
@@ -6,12 +7,31 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// BraynLabs Software signing identity (see keystore.properties at project root).
-val keystorePropertiesFile = rootProject.file("keystore.properties")
+// Optional release signing identity. Prefer keeping the real properties file
+// outside the repository and pointing Gradle at it with either:
+//   FREENOTE_KEYSTORE_PROPERTIES=/path/to/keystore.properties
+//   -PfreenoteKeystoreProperties=/path/to/keystore.properties
+val configuredKeystorePropertiesPath = providers.gradleProperty("freenoteKeystoreProperties")
+    .orElse(providers.environmentVariable("FREENOTE_KEYSTORE_PROPERTIES"))
+    .orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+val keystorePropertiesFile = configuredKeystorePropertiesPath
+    ?.let { rootProject.file(it) }
+    ?: rootProject.file("keystore.properties")
+if (configuredKeystorePropertiesPath != null && !keystorePropertiesFile.exists()) {
+    throw GradleException(
+        "Configured keystore properties file does not exist: ${keystorePropertiesFile.absolutePath}"
+    )
+}
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) {
         load(FileInputStream(keystorePropertiesFile))
     }
+}
+fun resolveKeystoreStoreFile(path: String): File {
+    val storeFile = File(path)
+    return if (storeFile.isAbsolute) storeFile else keystorePropertiesFile.parentFile.resolve(path)
 }
 
 android {
@@ -26,15 +46,15 @@ android {
         versionName = "1.1.0"
     }
 
-    // Sign with the BraynLabs identity when keystore.properties is present (see the
-    // .example template). Without it the project still builds: debug uses the default
-    // Android debug keystore and release is produced unsigned — so anyone can clone & build.
+    // Sign with the configured identity when keystore.properties is present (see
+    // the .example template). Without it the project still builds: debug uses
+    // the default Android debug keystore and release is produced unsigned.
     val hasKeystore = keystorePropertiesFile.exists()
 
     signingConfigs {
         if (hasKeystore) {
             create("braynlabs") {
-                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                storeFile = resolveKeystoreStoreFile(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["storePassword"] as String
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
