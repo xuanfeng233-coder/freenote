@@ -529,7 +529,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     private fun openDowngradeApks() {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.help_apk_url))))
-        } catch (e: ActivityNotFoundException) {
+        } catch (_: ActivityNotFoundException) {
             Toast.makeText(this, R.string.error_no_browser, Toast.LENGTH_SHORT).show()
         }
     }
