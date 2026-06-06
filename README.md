@@ -202,7 +202,7 @@ cd ncm-android
 ./gradlew assembleRelease    # → app/build/outputs/apk/release/app-release.apk
 ```
 
-- **签名**：根目录放 `keystore.properties`（从 `keystore.properties.example` 复制）即用自有 keystore 签名；不放也能构建——debug 用默认 debug keystore，release 产出**未签名**包（自行用 `apksigner` 签）。`keystore.properties` 与 `*.keystore` 已在 `.gitignore` 中，不会被提交。
+- **签名**：推荐把真实 `keystore.properties` 和 keystore 放在仓库外，然后用 `FREENOTE_KEYSTORE_PROPERTIES=/path/to/keystore.properties ./gradlew assembleRelease` 或 `./gradlew -PfreenoteKeystoreProperties=/path/to/keystore.properties assembleRelease` 指定；`storeFile` 可写绝对路径，或相对该 properties 文件。根目录仍兼容放 `keystore.properties`（从 `keystore.properties.example` 复制），不放也能构建——debug 用默认 debug keystore，release 产出**未签名**包（自行用 `apksigner` 签）。`keystore.properties` 与 `*.keystore` 已在 `.gitignore` 中，不会被提交。
 - 安装：`adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk`
 
 ## 可继续添加的格式（调研结论）

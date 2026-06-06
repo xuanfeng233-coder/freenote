@@ -21,6 +21,21 @@ Last updated: 2026-06-06
     separators when the base64 value ends with `=` padding.
 - Latest Phase 4 automated validation passed:
   - `./gradlew :app:testDebugUnitTest` (15 tests)
+- Phase 5 release hygiene has started:
+  - Added support for release signing properties stored outside the repository
+    via `FREENOTE_KEYSTORE_PROPERTIES` or `-PfreenoteKeystoreProperties`.
+  - Moved real signing material and root-level APK/third-party installer files
+    out of the repository working directory to
+    `/Users/xuanfeng/claudecode/freenote-private-artifacts-20260606`.
+  - Full release validation passed on 2026-06-06:
+    `FREENOTE_KEYSTORE_PROPERTIES=/Users/xuanfeng/claudecode/freenote-private-artifacts-20260606/signing/keystore.properties ./gradlew clean :app:testDebugUnitTest :app:assembleDebug :app:lintDebug :app:assembleRelease`.
+  - Signing verification passed on 2026-06-06: debug APK signer is
+    `CN=Android Debug`; release APK signer is
+    `CN=BraynLabs Software, O=BraynLabs Software, OU=Mobile, C=CN`.
+  - Root-level `local.properties` remains because neither `ANDROID_HOME` nor
+    `ANDROID_SDK_ROOT` is set in the local shell environment.
+  - Real-device Phase 5 install/smoke verification is blocked until an ADB
+    device is connected.
 - Previous full automated validation passed:
   - `./gradlew :app:assembleDebug`
   - `./gradlew :app:lintDebug`
@@ -37,7 +52,8 @@ Last updated: 2026-06-06
   because no encrypted sample files were present on shared storage: in-app
   playback, notification controls, lock-screen controls, Android 10+ MediaStore
   output visibility, and metadata edit/resync.
-- Next planned work: Phase 4 codec-vector tests, full validation, and
+- Next planned work: connect an Android device to complete Phase 5
+  install/smoke testing, then continue Phase 4 codec-vector tests and
   dependency/lint cleanup.
 
 ## Goals
@@ -342,10 +358,13 @@ Objective: reduce accidental leaks and make releases repeatable.
 
 ### Local Artifact Hygiene
 
-- Move real keystores, `keystore.properties`, and third-party app installers out
+- [x] Support real signing properties stored outside the repository while
+  preserving root-level `keystore.properties` compatibility for local builds.
+- [x] Move real keystores, `keystore.properties`, and third-party app installers out
   of the repository working directory when practical.
-- Keep `.gitignore` protections in place.
-- Before publishing, run `git status --short` and verify no sensitive file is
+- [x] Keep `.gitignore` protections in place for `keystore.properties`,
+  keystores, APKs, AABs, and local machine files.
+- [x] Before publishing, run `git status --short` and verify no sensitive file is
   tracked.
 
 Acceptance:
@@ -355,11 +374,31 @@ Acceptance:
 
 ### Release Checklist
 
-- Build debug and release variants.
-- Verify release signing identity intentionally.
-- Install on a real device and run the smoke checklist.
-- Archive the APK/AAB only from `app/build/outputs`.
-- Record versionCode/versionName changes in the release notes.
+- [x] Build debug and release variants.
+- [x] Run `:app:testDebugUnitTest` and `:app:lintDebug` as part of release
+  validation.
+- [x] Verify release signing identity intentionally.
+- [ ] Install on a real device and run the smoke checklist.
+- [x] Archive the APK/AAB only from `app/build/outputs`.
+- [x] Record versionCode/versionName changes in the release notes/checklist.
+
+2026-06-06 release hygiene notes:
+
+- Current generated artifacts:
+  - `app/build/outputs/apk/debug/app-debug.apk`
+  - `app/build/outputs/apk/release/app-release.apk`
+- Current release metadata: `applicationId=com.braynlabs.freenote`,
+  `versionCode=1`, `versionName=1.0.0`.
+- `git status --short` was clean before Phase 5 edits and no sensitive files
+  were tracked by Git.
+- Real signing files and root-level APK/installers were moved to
+  `/Users/xuanfeng/claudecode/freenote-private-artifacts-20260606`:
+  `signing/keystore.properties`, `signing/braynlabs.keystore`, and
+  `apks/`.
+- A root-level ignored `local.properties` remains only to locate the Android SDK
+  for local Gradle builds.
+- `adb devices -l` reported no connected devices, so install and smoke testing
+  remain pending.
 
 Acceptance:
 
