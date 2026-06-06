@@ -3,6 +3,7 @@ package com.ncmdecrypt
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -135,7 +136,7 @@ class FileListAdapter(
                         editTagsButton.visibility =
                             if (track?.tagsEditable == true) View.VISIBLE else View.GONE
                         editTagsButton.setOnClickListener { host.onEdit(bindingAdapterPosition) }
-                        setupShareButton(outputFile)
+                        setupShareButton(outputFile, track)
                     } else {
                         actionsRow.visibility = View.GONE
                     }
@@ -175,11 +176,11 @@ class FileListAdapter(
             statusIcon.visibility = View.VISIBLE
         }
 
-        private fun setupShareButton(file: File) {
+        private fun setupShareButton(cacheFile: File, track: Track?) {
             shareButton.setOnClickListener {
                 val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = getMimeType(file.extension)
-                    putExtra(Intent.EXTRA_STREAM, uriFor(file))
+                    type = getMimeType(cacheFile.extension)
+                    putExtra(Intent.EXTRA_STREAM, shareUriFor(track, cacheFile))
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
@@ -192,6 +193,15 @@ class FileListAdapter(
                 }
             }
         }
+
+        /**
+         * Share the *real* saved output (MediaStore / SAF uri) so the receiver gets the same file
+         * the user sees in their folder; fall back to a FileProvider uri over the cached copy only
+         * when there is no public output (legacy / cache-only saves).
+         */
+        private fun shareUriFor(track: Track?, cacheFile: File): Uri =
+            ShareTarget.preferredOutputUri(track?.mediaStoreUri)?.let(Uri::parse)
+                ?: uriFor(cacheFile)
 
         private fun uriFor(file: File) = FileProvider.getUriForFile(
             context,
