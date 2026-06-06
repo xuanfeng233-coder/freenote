@@ -1,6 +1,7 @@
 package com.ncmdecrypt
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,18 +12,19 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.view.View
-import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.chip.Chip
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import java.io.File
 import java.io.FileOutputStream
@@ -36,10 +38,8 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     private lateinit var statusTextView: TextView
     private lateinit var selectFilesButton: MaterialButton
     private lateinit var decryptAllButton: MaterialButton
-    private lateinit var importKeysButton: MaterialButton
-    private lateinit var outputDirButton: MaterialButton
-    private lateinit var rootImportButton: MaterialButton
-    private lateinit var infoButton: ImageButton
+    private lateinit var topAppBar: MaterialToolbar
+    private lateinit var outputDirChip: Chip
     private lateinit var progressBar: LinearProgressIndicator
     private lateinit var emptyState: View
     private lateinit var playerUi: PlayerUiController
@@ -111,10 +111,8 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         statusTextView = findViewById(R.id.statusTextView)
         selectFilesButton = findViewById(R.id.selectFilesButton)
         decryptAllButton = findViewById(R.id.decryptAllButton)
-        importKeysButton = findViewById(R.id.importKeysButton)
-        outputDirButton = findViewById(R.id.outputDirButton)
-        rootImportButton = findViewById(R.id.rootImportButton)
-        infoButton = findViewById(R.id.infoButton)
+        topAppBar = findViewById(R.id.topAppBar)
+        outputDirChip = findViewById(R.id.outputDirChip)
         progressBar = findViewById(R.id.progressBar)
         emptyState = findViewById(R.id.emptyState)
 
@@ -142,11 +140,17 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
 
         selectFilesButton.setOnClickListener { pickFiles() }
         decryptAllButton.setOnClickListener { onDecryptClicked() }
-        importKeysButton.setOnClickListener { keyImporter.launch("*/*") }
-        outputDirButton.setOnClickListener { onOutputDirClicked() }
-        rootImportButton.visibility = if (RootHelper.isRootAvailable()) View.VISIBLE else View.GONE
-        rootImportButton.setOnClickListener { onRootImportClicked() }
-        infoButton.setOnClickListener { showHelpDialog() }
+        topAppBar.inflateMenu(R.menu.main_menu)
+        topAppBar.menu.findItem(R.id.action_root_import).isVisible = RootHelper.isRootAvailable()
+        topAppBar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_import_keys -> { keyImporter.launch("*/*"); true }
+                R.id.action_root_import -> { onRootImportClicked(); true }
+                R.id.action_help -> { showHelpDialog(); true }
+                else -> false
+            }
+        }
+        outputDirChip.setOnClickListener { onOutputDirClicked() }
         updateKeyCount()
         updateOutputDirLabel()
     }
@@ -297,13 +301,13 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
 
     private fun updateKeyCount() {
         val n = EkeyStore.count()
-        importKeysButton.text = if (n > 0) getString(R.string.import_keys_n, n)
-        else getString(R.string.import_keys)
+        topAppBar.menu.findItem(R.id.action_import_keys).title =
+            if (n > 0) getString(R.string.import_keys_n, n) else getString(R.string.import_keys)
     }
 
     private fun updateOutputDirLabel() {
         val name = OutputDirStore.displayName(this)
-        outputDirButton.text = if (name != null) getString(R.string.output_dir_set, name)
+        outputDirChip.text = if (name != null) getString(R.string.output_dir_set, name)
         else getString(R.string.output_dir_default)
     }
 
@@ -312,7 +316,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
             outputDirPicker.launch(null)
             return
         }
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.output_dir_title)
             .setItems(
                 arrayOf(getString(R.string.output_dir_change), getString(R.string.output_dir_reset))
@@ -327,7 +331,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     }
 
     private fun onRootImportClicked() {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.root_import_confirm_title)
             .setMessage(R.string.root_import_confirm_msg)
             .setPositiveButton(R.string.root_import_continue) { _, _ -> runRootImport() }
@@ -514,11 +518,20 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     }
 
     private fun showHelpDialog() {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.help_title)
             .setMessage(R.string.help_message)
+            .setNeutralButton(R.string.help_download_apk) { _, _ -> openDowngradeApks() }
             .setPositiveButton(R.string.help_got_it, null)
             .show()
+    }
+
+    private fun openDowngradeApks() {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.help_apk_url))))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.error_no_browser, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun startDecryptAll() {

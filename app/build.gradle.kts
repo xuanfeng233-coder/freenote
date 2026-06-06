@@ -42,8 +42,8 @@ android {
         applicationId = "com.braynlabs.freenote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     // Sign with the configured identity when keystore.properties is present (see

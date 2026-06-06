@@ -47,6 +47,13 @@ adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk
   set `FREENOTE_KEYSTORE_PROPERTIES=/path/to/keystore.properties` or pass
   `-PfreenoteKeystoreProperties=/path/to/keystore.properties`. Root-level
   `keystore.properties` still works for local compatibility and remains git-ignored.
+- **Release signing material (this machine):** the real signing identity lives OUTSIDE the repo at
+  `/Users/xuanfeng/claudecode/freenote-private-artifacts-20260606/signing/` —
+  `keystore.properties` + `braynlabs.keystore` (alias `braynlabs`, cert SHA-256
+  `8E:E3:94:24:…:DF:32:60:FF`; this is the cert v1.0.0/v1.1.0/v1.2.0 shipped with — reusing it is
+  required so update installs don't break). Build a signed release with:
+  `FREENOTE_KEYSTORE_PROPERTIES=/Users/xuanfeng/claudecode/freenote-private-artifacts-20260606/signing/keystore.properties ./gradlew assembleRelease`.
+  Passwords are in that `keystore.properties` only — never copy them here.
 
 ## Critical invariants — do not relearn these the hard way
 
