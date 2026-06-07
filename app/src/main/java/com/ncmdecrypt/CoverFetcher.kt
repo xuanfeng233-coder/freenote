@@ -1,9 +1,6 @@
 package com.ncmdecrypt
 
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
 import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
 
@@ -29,8 +26,6 @@ object CoverFetcher {
     /** Cover sources, in the abstract. [providersFor] orders them per origin platform. */
     enum class Source { QQ, KUGOU, KUWO, NETEASE, ITUNES }
 
-    private const val TIMEOUT_MS = 8000
-    private const val UA = "Mozilla/5.0 (Linux; Android) FreeNote"
     private const val MAX_CANDIDATES = 5
 
     /** Session caches so a batch never refetches the same song. Key = normalized "artist|title". */
@@ -164,8 +159,8 @@ object CoverFetcher {
     // ── Providers ────────────────────────────────────────────────────────────────
 
     private fun fromItunes(q: Query): ByteArray? {
-        val term = enc("${q.artist} ${q.title}")
-        val json = httpGetString(
+        val term = MusicHttp.enc("${q.artist} ${q.title}")
+        val json = MusicHttp.getString(
             "https://itunes.apple.com/search?term=$term&media=music&entity=song&limit=$MAX_CANDIDATES"
         ) ?: return null
         val arr = JSONObject(json).optJSONArray("results") ?: return null
@@ -173,15 +168,15 @@ object CoverFetcher {
             val o = arr.getJSONObject(i)
             if (isStrongMatch(q, o.optString("artistName"), o.optString("trackName"))) {
                 val url = itunesUpscale(o.optString("artworkUrl100"))
-                if (url.isNotBlank()) httpGetBytes(url)?.let { return it }
+                if (url.isNotBlank()) MusicHttp.getBytes(url)?.let { return it }
             }
         }
         return null
     }
 
     private fun fromNetease(q: Query): ByteArray? {
-        val s = enc("${q.artist} ${q.title}")
-        val json = httpGetString(
+        val s = MusicHttp.enc("${q.artist} ${q.title}")
+        val json = MusicHttp.getString(
             "https://music.163.com/api/search/get?s=$s&type=1&limit=$MAX_CANDIDATES",
             referer = "https://music.163.com"
         ) ?: return null
@@ -194,7 +189,7 @@ object CoverFetcher {
             if (accept(q, artists, o.optString("name"))) {
                 val pic = neteasePicUrl(o.optLong("id"))
                     ?: o.optJSONObject("album")?.optString("picUrl")?.takeIf { it.isNotBlank() }
-                if (pic != null) httpGetBytes("$pic?param=500y500")?.let { return it }
+                if (pic != null) MusicHttp.getBytes("$pic?param=500y500")?.let { return it }
             }
         }
         return null
@@ -202,7 +197,7 @@ object CoverFetcher {
 
     private fun neteasePicUrl(id: Long): String? {
         if (id <= 0) return null
-        val json = httpGetString(
+        val json = MusicHttp.getString(
             "https://music.163.com/api/song/detail/?ids=%5B$id%5D",
             referer = "https://music.163.com"
         ) ?: return null
@@ -211,8 +206,8 @@ object CoverFetcher {
     }
 
     private fun fromKuwo(q: Query): ByteArray? {
-        val all = enc("${q.artist} ${q.title}")
-        val raw = httpGetString(
+        val all = MusicHttp.enc("${q.artist} ${q.title}")
+        val raw = MusicHttp.getString(
             "https://search.kuwo.cn/r.s?all=$all&ft=music&itemset=web_2013&client=kt" +
                 "&pn=0&rn=$MAX_CANDIDATES&rformat=json&encoding=utf8"
         ) ?: return null
@@ -225,7 +220,7 @@ object CoverFetcher {
             val artist = kuwoText(o.optString("ARTIST"))
             if (accept(q, listOf(artist), title)) {
                 val pic = o.optString("web_albumpic_short")
-                if (pic.isNotBlank()) httpGetBytes(kuwoCoverUrl(pic))?.let { return it }
+                if (pic.isNotBlank()) MusicHttp.getBytes(kuwoCoverUrl(pic))?.let { return it }
             }
         }
         return null
@@ -234,8 +229,8 @@ object CoverFetcher {
     private fun kuwoText(s: String) = s.replace("&nbsp;", " ").trim()
 
     private fun fromQq(q: Query): ByteArray? {
-        val w = enc("${q.artist} ${q.title}")
-        val json = httpGetString(
+        val w = MusicHttp.enc("${q.artist} ${q.title}")
+        val json = MusicHttp.getString(
             "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?ct=24&qqmusic_ver=1298&new_json=1" +
                 "&t=0&p=1&n=$MAX_CANDIDATES&w=$w&format=json&platform=yqq.json&needNewCode=0",
             referer = "https://y.qq.com/"
@@ -250,15 +245,15 @@ object CoverFetcher {
             } ?: emptyList()
             if (accept(q, singers, title)) {
                 val mid = o.optJSONObject("album")?.optString("mid")
-                if (!mid.isNullOrBlank()) httpGetBytes(qqCoverUrl(mid))?.let { return it }
+                if (!mid.isNullOrBlank()) MusicHttp.getBytes(qqCoverUrl(mid))?.let { return it }
             }
         }
         return null
     }
 
     private fun fromKugou(q: Query): ByteArray? {
-        val keyword = enc("${q.artist} ${q.title}")
-        val json = httpGetString(
+        val keyword = MusicHttp.enc("${q.artist} ${q.title}")
+        val json = MusicHttp.getString(
             "https://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=$keyword" +
                 "&page=1&pagesize=$MAX_CANDIDATES&showtype=1"
         ) ?: return null
@@ -276,49 +271,22 @@ object CoverFetcher {
     /** Second Kugou call: hash → play data → album image URL (with a `{size}` placeholder). */
     private fun kugouCover(hash: String): ByteArray? {
         if (hash.isBlank()) return null
-        val json = httpGetString(
+        val json = MusicHttp.getString(
             "https://www.kugou.com/yy/index.php?r=play/getdata&hash=$hash",
             referer = "https://www.kugou.com/"
         ) ?: return null
         val data = JSONObject(json).optJSONObject("data") ?: return null
         val img = listOf(data.optString("img"), data.optString("album_img"))
             .firstOrNull { it.isNotBlank() } ?: return null
-        return httpGetBytes(img.replace("{size}", "480"))
+        return MusicHttp.getBytes(img.replace("{size}", "480"))
     }
 
     // ── HTTP + helpers ───────────────────────────────────────────────────────────
-
-    private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 
     private fun looksLikeImage(b: ByteArray): Boolean {
         if (b.size < 256) return false
         val jpg = b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte()
         val png = b[0] == 0x89.toByte() && b[1] == 0x50.toByte()
         return jpg || png
-    }
-
-    private fun httpGetString(urlStr: String, referer: String? = null): String? =
-        openGet(urlStr, referer) { it.bufferedReader(Charsets.UTF_8).readText() }
-
-    private fun httpGetBytes(urlStr: String, referer: String? = null): ByteArray? =
-        openGet(urlStr, referer) { it.readBytes() }
-
-    private fun <T> openGet(urlStr: String, referer: String?, read: (java.io.InputStream) -> T): T? {
-        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-            connectTimeout = TIMEOUT_MS
-            readTimeout = TIMEOUT_MS
-            instanceFollowRedirects = true
-            requestMethod = "GET"
-            setRequestProperty("User-Agent", UA)
-            if (referer != null) setRequestProperty("Referer", referer)
-        }
-        return try {
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) null
-            else conn.inputStream.use { read(it) }
-        } catch (_: Exception) {
-            null
-        } finally {
-            runCatching { conn.disconnect() }
-        }
     }
 }
