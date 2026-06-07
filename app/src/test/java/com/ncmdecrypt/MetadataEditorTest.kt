@@ -43,4 +43,17 @@ class MetadataEditorTest {
         assertFalse(MetadataEditor.isEmbeddable(AudioFormat.APE))
         assertFalse(MetadataEditor.isEmbeddable(AudioFormat.UNKNOWN))
     }
+
+    @Test
+    fun embedLyricsSkipsNonEmbeddableWithoutThrowing() {
+        // AAC is not embeddable → early return, no file touched, no throw.
+        MetadataEditor.embedLyricsIfMissing(java.io.File("/no/such/file.aac"), AudioFormat.AAC, "[00:01.00]x")
+    }
+
+    @Test
+    fun embedLyricsSkipsBlankLyricsWithoutThrowing() {
+        // Embeddable format but blank/null lyric → early return before touching the file.
+        MetadataEditor.embedLyricsIfMissing(java.io.File("/no/such/file.flac"), AudioFormat.FLAC, null)
+        MetadataEditor.embedLyricsIfMissing(java.io.File("/no/such/file.flac"), AudioFormat.FLAC, "   ")
+    }
 }

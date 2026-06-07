@@ -1,12 +1,12 @@
 # 🎵 FreeNote · 音频解锁 (NcmDecrypt)
 
-> Android 本地加密音乐解码器 — 纯 Kotlin，解密全程离线、无需服务器。（仅"联网补全封面"开关开启时，会用歌名/艺术家联网查询专辑封面，可关闭。）
+> Android 本地加密音乐解码器 — 纯 Kotlin，解密全程离线、无需服务器。（仅"联网补全封面/歌词"开关开启时，会用歌名/艺术家联网查询专辑封面与歌词，均可关闭。）
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-3ddc84)
 ![Language](https://img.shields.io/badge/Kotlin-100%25-7f52ff)
 
-把你**已经下载到本地**的加密音乐（网易云 `.ncm`、QQ音乐 `.qmc/.mflac`、酷狗 `.kgm`、酷我 `.kwm` 等）解码还原成普通的 FLAC / MP3 / OGG 文件。**解密全程在手机本地完成，不上传任何音频文件、不连任何解密服务器。** 唯一的联网是可选的「联网补全封面」（默认开、可在菜单关闭）：当解出的文件自身没有封面时，仅用歌名/艺术家去公开音乐接口查一张专辑封面内嵌进去——只发送文字、不发送音频。
+把你**已经下载到本地**的加密音乐（网易云 `.ncm`、QQ音乐 `.qmc/.mflac`、酷狗 `.kgm`、酷我 `.kwm` 等）解码还原成普通的 FLAC / MP3 / OGG 文件。**解密全程在手机本地完成，不上传任何音频文件、不连任何解密服务器。** 唯一的联网是可选的「联网补全封面」与「联网补全歌词」（两个独立开关，默认开、均可在菜单关闭）：当解出的文件自身没有封面/歌词时，仅用歌名/艺术家去公开音乐接口查询，封面内嵌进文件、歌词内嵌进文件并另存一份 `.lrc`——只发送文字、不发送音频。
 
 > ⚖️ **免责声明**：本工具仅用于**个人合法获取的音乐文件的本地格式转换与互操作**（例如把你已购买/已下载的歌曲转成通用格式在自有设备上播放）。请勿用于侵犯版权、商业分发或任何违反你所在地区法律法规及平台服务条款的用途。开发者不对滥用承担责任。
 
@@ -24,6 +24,7 @@
 - ✅ 一次可多选、批量解密
 - ✅ 内置播放器（后台播放 + 锁屏控制）+ 改标题/艺术家/专辑/封面
 - ✅ 自动补全封面：NCM 用文件自带封面；QMC/酷狗/酷我 等文件本身没封面时，可选「联网补全封面」按来源平台（QQ/酷狗/酷我，再退网易云/iTunes）查询内嵌，仅发歌名/艺术家
+- ✅ 自动补全歌词：可选「联网补全歌词」按来源平台（QQ/酷狗/酷我，再退网易云）查询带时间轴的 LRC，内嵌进音频并导出同名 `.lrc`；应用内播放器「歌词」tab 随播放滚动，仅发歌名/艺术家
 - ✅ 解密后可一键分享
 
 ## 下载安装
@@ -118,7 +119,7 @@ ncm-android/
 │       │   ├── PlaybackService.kt      # Media3 MediaSessionService（后台播放）
 │       │   ├── PlayerHub.kt            # 持有 MediaController + 队列，广播 PlayerState
 │       │   ├── PlayerUiController.kt    # 底部 sheet 播放器 + Apple Music 风格动效
-│       │   ├── Track.kt / TrackBuilder.kt   # Track 模型 + 解密后构建（含封面 sidecar）
+│       │   ├── Track.kt / TrackBuilder.kt   # Track 模型 + 解密后构建（含封面/歌词 sidecar）
 │       │   └── MetadataEditor.kt / MetadataEditSheet.kt   # jAudioTagger 标签编辑
 │       └── res/                        # 布局 / drawable / 主题 / strings
 ├── build.gradle.kts                # 项目级插件版本

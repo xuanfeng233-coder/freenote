@@ -16,7 +16,8 @@ object TrackBuilder {
         decryptedFile: File,
         mediaStoreUri: String?,
         formatTag: String,
-        publicPath: String? = null
+        publicPath: String? = null,
+        lyrics: String? = null
     ): Track {
         var title: String? = null
         var artist: String? = null
@@ -56,6 +57,13 @@ object TrackBuilder {
 
         val coverPath = cover?.let { writeCoverSidecar(decryptedFile, it) }
 
+        // Lyrics: prefer the value threaded from the decrypt flow (fetched / pre-existing), else
+        // read the file's own embedded lyric. Write a sidecar next to the cached copy for the
+        // in-app lyrics tab.
+        val lyricsText = lyrics?.takeIf { LrcParser.hasRealLyrics(it) }
+            ?: MetadataEditor.readLyrics(decryptedFile)?.takeIf { LrcParser.hasRealLyrics(it) }
+        val lyricsPath = lyricsText?.let { writeLyricsSidecar(decryptedFile, it) }
+
         val fallbackTitle = originalName.substringBeforeLast('.').ifBlank { originalName }
         return Track(
             id = decryptedFile.absolutePath,
@@ -65,6 +73,7 @@ object TrackBuilder {
             album = album?.takeIf { it.isNotBlank() } ?: "",
             formatTag = formatTag,
             coverPath = coverPath,
+            lyricsPath = lyricsPath,
             mediaStoreUri = mediaStoreUri,
             publicPath = publicPath
         )
@@ -99,6 +108,21 @@ object TrackBuilder {
         val sidecarName = FilenameSanitizer.sanitizeFileName(audioFile.name + ".cover", "cover.cover")
         val sidecar = File(audioFile.parentFile, sidecarName)
         sidecar.writeBytes(bytes)
+        sidecar.absolutePath
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Writes lyrics to "<audio-name-without-ext>.lrc" next to the cached file, UTF-8 + BOM. NOTE the
+     * stem differs from the cover sidecar ("song.lrc", NOT "song.flac.lrc") so players pair it with
+     * the audio. Returns its path or null.
+     */
+    fun writeLyricsSidecar(audioFile: File, lrc: String): String? = try {
+        val sidecarName = FilenameSanitizer.sanitizeFileName(audioFile.nameWithoutExtension + ".lrc", "lyrics.lrc")
+        val sidecar = File(audioFile.parentFile, sidecarName)
+        val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+        sidecar.writeBytes(bom + lrc.toByteArray(Charsets.UTF_8))
         sidecar.absolutePath
     } catch (_: Exception) {
         null

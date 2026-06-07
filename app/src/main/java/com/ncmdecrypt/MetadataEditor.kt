@@ -171,4 +171,39 @@ object MetadataEditor {
             // Embedding is a bonus; the raw decrypted audio is already correct. Swallow.
         }
     }
+
+    /**
+     * Best-effort read of the embedded lyric tag ([FieldKey.LYRICS] → USLT / Vorbis LYRICS comment).
+     * Returns null on any failure or when no lyric is present.
+     */
+    fun readLyrics(file: File): String? = try {
+        AudioFileIO.read(file).tag?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Additive lyric tagging used right after decryption, mirroring [embedIfMissing]: writes the
+     * full synced LRC text (timestamps and all) into [FieldKey.LYRICS] **only when the file has no
+     * lyric** — so an output that already carries lyrics stays byte-identical. Maps to the USLT
+     * frame (MP3/WAV) or the LYRICS Vorbis comment (FLAC/OGG); SYLT is intentionally not used.
+     * Never throws; unsupported containers are skipped. The file must already have its real
+     * extension (jAudioTagger selects its reader by extension).
+     */
+    fun embedLyricsIfMissing(file: File, fmt: AudioFormat, lrc: String?) {
+        if (!isEmbeddable(fmt)) return
+        val text = lrc?.trim().orEmpty()
+        if (text.isEmpty()) return
+        try {
+            val audioFile = AudioFileIO.read(file)
+            val tag = audioFile.tagOrCreateAndSetDefault
+            val existing = runCatching { tag.getFirst(FieldKey.LYRICS) }.getOrNull()
+            if (existing.isNullOrBlank()) {
+                tag.setField(FieldKey.LYRICS, text)
+                audioFile.commit()
+            }
+        } catch (_: Exception) {
+            // Embedding is a bonus; the raw decrypted audio is already correct. Swallow.
+        }
+    }
 }

@@ -11,13 +11,15 @@ FreeNote / NcmDecrypt — an offline Android decoder for DRM-wrapped local music
 they already downloaded; the app strips the container encryption and writes plain
 FLAC/MP3/OGG/etc.
 
-**Network exception (the only one):** decryption is 100% offline, but `CoverFetcher.kt`
-optionally looks up *album art* online for outputs that ship cover-less (QMC/KGM/KWM —
-unlike NCM, whose header carries a cover). It sends only the song's title/artist text,
-never audio, and is gated by the user toggle `CoverPrefs` ("联网补全封面", default on). The
-`INTERNET` permission and `res/xml/network_security_config.xml` exist solely for this. If
-you reintroduce a "no network at all" claim anywhere, it is now wrong — keep the audio
-path offline, keep cover lookup the single, opt-out-able network use.
+**Network exception (the only one):** decryption is 100% offline, but the app optionally looks up
+*album art* (`CoverFetcher.kt`) **and *lyrics*** (`LyricsFetcher.kt`) online for outputs that ship
+without them (QMC/KGM/KWM — and lyrics for all formats, since even NCM headers carry no lyric). It
+sends only the song's title/artist text, never audio, and is gated by two independent default-on
+toggles: `CoverPrefs` ("联网补全封面") and `LyricsPrefs` ("联网补全歌词"). The `INTERNET` permission and
+`res/xml/network_security_config.xml` exist solely for these. If you reintroduce a "no network at
+all" claim anywhere, it is now wrong — keep the audio path offline, keep cover + lyric lookup the
+single, opt-out-able network use. Lyrics are embedded into the audio tag (`FieldKey.LYRICS`) and
+exported as a sidecar `.lrc`; shared HTTP lives in `MusicHttp.kt`.
 
 - `namespace = com.ncmdecrypt`, `applicationId = com.braynlabs.freenote`, app label **FreeNote**.
 - The three names (NcmDecrypt / FreeNote / com.braynlabs.freenote) are historical; don't "fix"
@@ -107,9 +109,12 @@ adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk
 | `PlaybackService.kt` | Media3 `MediaSessionService` — background ExoPlayer + lock-screen/notification. |
 | `PlayerHub.kt` | Owns the `MediaController` + queue; broadcasts `PlayerState`. |
 | `PlayerUiController.kt` | Bottom-sheet player + Apple-Music-style motion (spring cover, mini↔full expand, Palette ambient gradient). |
-| `Track.kt` / `TrackBuilder.kt` | `Track` model + building it post-decrypt (NCM header info or `MediaMetadataRetriever`; writes cover sidecar). |
+| `Track.kt` / `TrackBuilder.kt` | `Track` model + building it post-decrypt (NCM header info or `MediaMetadataRetriever`; writes cover + lyrics `.lrc` sidecars). |
 | `MetadataEditor.kt` / `MetadataEditSheet.kt` | jAudioTagger read/write of title/artist/album/cover + bottom-sheet editor. `embedIfMissing` is the additive post-decrypt tagger (fills blanks / cover-if-none, byte-stable otherwise). |
-| `CoverFetcher.kt` / `CoverPrefs.kt` | **The only networked code.** Online album-cover lookup, origin-platform-first (QMC→QQ, KGM→酷狗, KWM→酷我, else 网易云→iTunes), strict artist+title match to avoid wrong covers. `CoverPrefs` is the on-by-default toggle. |
+| `CoverFetcher.kt` / `CoverPrefs.kt` | **Networked (one of two — see also `LyricsFetcher`).** Online album-cover lookup, origin-platform-first (QMC→QQ, KGM→酷狗, KWM→酷我, else 网易云→iTunes), strict artist+title match to avoid wrong covers. `CoverPrefs` is the on-by-default toggle. |
+| `LyricsFetcher.kt` / `LyricsPrefs.kt` | Online LRC lookup (origin-platform-first, reuses CoverFetcher matching + `MusicHttp`) + its on-by-default toggle. |
+| `LrcParser.kt` / `LyricsView.kt` | Pure LRC→`LrcLine` parser + custom synced-scrolling lyric view (player "歌词" tab). |
+| `MusicHttp.kt` | Shared best-effort HTTP GET (cover + lyric). |
 
 ## Conventions
 

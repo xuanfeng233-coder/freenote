@@ -21,6 +21,7 @@ import com.google.android.material.color.MaterialColors
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.imageview.ShapeableImageView
 import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.tabs.TabLayout
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.shape.ShapeAppearanceModel
 import com.google.android.material.slider.Slider
@@ -67,10 +68,13 @@ class PlayerUiController(
     private val repeatButton: ImageButton = activity.findViewById(R.id.repeatButton)
     private val prevButton: ImageButton = activity.findViewById(R.id.prevButton)
     private val nextButton: ImageButton = activity.findViewById(R.id.nextButton)
+    private val playerTabs: TabLayout = activity.findViewById(R.id.playerTabs)
+    private val lyricsView: LyricsView = activity.findViewById(R.id.lyricsView)
 
     private val behavior = BottomSheetBehavior.from(sheet)
     private val coverExecutor = Executors.newSingleThreadExecutor()
     private val coverLoadToken = AtomicLong(0)
+    private val lyricsLoadToken = AtomicLong(0)
 
     // Springs for the play/pause cover scale (the signature Apple Music effect).
     private val scaleXSpring = spring(fullCover, DynamicAnimation.SCALE_X)
@@ -145,6 +149,15 @@ class PlayerUiController(
         shuffleButton.setOnClickListener { PlayerHub.toggleShuffle() }
         repeatButton.setOnClickListener { PlayerHub.cycleRepeat() }
 
+        playerTabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) { showLyrics(tab.position == 1) }
+            override fun onTabUnselected(tab: TabLayout.Tab) {}
+            override fun onTabReselected(tab: TabLayout.Tab) {}
+        })
+        playerTabs.getTabAt(0)?.contentDescription = activity.getString(R.string.cd_tab_cover)
+        playerTabs.getTabAt(1)?.contentDescription = activity.getString(R.string.cd_tab_lyrics)
+        showLyrics(false)
+
         seekBar.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
             override fun onStartTrackingTouch(slider: Slider) { userSeeking = true }
             override fun onStopTrackingTouch(slider: Slider) {
@@ -202,6 +215,7 @@ class PlayerUiController(
             lastTrackId = track.id
             bindTrackText(track)
             loadCover(track)
+            loadLyrics(track)
         }
 
         // Play/pause icon + spring cover scale.
@@ -223,6 +237,7 @@ class PlayerUiController(
         }
         durationText.text = formatTime(dur)
         miniProgress.setProgressCompat((fraction * 1000).toInt(), true)
+        lyricsView.updatePosition(state.positionMs)
 
         // Repeat / shuffle affordances.
         if (lastRepeat != state.repeatMode) {
@@ -270,6 +285,31 @@ class PlayerUiController(
                     miniCover.setImageResource(R.drawable.ic_default_cover)
                 }
                 animateAmbient(top, bottom)
+            }
+        }
+    }
+
+    /** Toggle the cover/lyrics tab: lyrics replaces cover + title + artist; transport stays. */
+    private fun showLyrics(show: Boolean) {
+        lyricsView.visibility = if (show) View.VISIBLE else View.GONE
+        val coverVis = if (show) View.INVISIBLE else View.VISIBLE
+        coverContainer.visibility = coverVis
+        fullTitle.visibility = coverVis
+        fullArtist.visibility = coverVis
+    }
+
+    private fun loadLyrics(track: Track) {
+        val token = lyricsLoadToken.incrementAndGet()
+        val path = track.lyricsPath
+        coverExecutor.execute {
+            val lines = path?.let {
+                runCatching {
+                    LrcParser.parse(File(it).readText(Charsets.UTF_8).removePrefix("﻿"))
+                }.getOrNull()
+            } ?: emptyList()
+            activity.runOnUiThread {
+                if (token != lyricsLoadToken.get()) return@runOnUiThread
+                lyricsView.setLines(lines)
             }
         }
     }

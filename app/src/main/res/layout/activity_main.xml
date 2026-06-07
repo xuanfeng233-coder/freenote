@@ -246,6 +246,43 @@
                 app:layout_constraintTop_toTopOf="@id/collapseButton"
                 app:tint="?attr/colorOnSurfaceVariant" />
 
+            <com.google.android.material.tabs.TabLayout
+                android:id="@+id/playerTabs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/collapseButton"
+                app:tabGravity="center"
+                app:tabIndicatorColor="?attr/colorPrimary"
+                app:tabMode="auto"
+                app:tabSelectedTextColor="?attr/colorOnSurface"
+                app:tabTextColor="?attr/colorOnSurfaceVariant">
+
+                <com.google.android.material.tabs.TabItem
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tab_cover" />
+
+                <com.google.android.material.tabs.TabItem
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/tab_lyrics" />
+            </com.google.android.material.tabs.TabLayout>
+
+            <com.ncmdecrypt.LyricsView
+                android:id="@+id/lyricsView"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="12dp"
+                android:visibility="gone"
+                app:layout_constraintBottom_toTopOf="@id/seekBar"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/playerTabs" />
+
             <!-- Cover container: slide-driven scale/translate (the "container expand" feel) -->
             <FrameLayout
                 android:id="@+id/coverContainer"
@@ -257,7 +294,7 @@
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/collapseButton"
+                app:layout_constraintTop_toBottomOf="@id/playerTabs"
                 app:layout_constraintVertical_bias="0.5"
                 app:layout_constraintWidth_max="380dp">
 

@@ -143,6 +143,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         topAppBar.inflateMenu(R.menu.main_menu)
         topAppBar.menu.findItem(R.id.action_root_import).isVisible = RootHelper.isRootAvailable()
         topAppBar.menu.findItem(R.id.action_fetch_covers).isChecked = CoverPrefs.isEnabled(this)
+        topAppBar.menu.findItem(R.id.action_fetch_lyrics).isChecked = LyricsPrefs.isEnabled(this)
         topAppBar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_import_keys -> { keyImporter.launch("*/*"); true }
@@ -151,6 +152,12 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                     val enabled = !item.isChecked
                     item.isChecked = enabled
                     CoverPrefs.setEnabled(this, enabled)
+                    true
+                }
+                R.id.action_fetch_lyrics -> {
+                    val enabled = !item.isChecked
+                    item.isChecked = enabled
+                    LyricsPrefs.setEnabled(this, enabled)
                     true
                 }
                 R.id.action_help -> { showHelpDialog(); true }
@@ -648,8 +655,9 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                     // NCM whose header carries one), look it up online from the origin platform.
                     // Best-effort, gated by the user toggle; never fails the decrypt.
                     maybeFetchCover(toSave, audioFmt, formatTag, displayName)
+                    val lrc = maybeFetchLyrics(toSave, audioFmt, formatTag, displayName)
 
-                    val saved = saveDecrypted(displayName, toSave, audioFmt)
+                    val saved = saveDecrypted(displayName, toSave, audioFmt, lrc)
                     // Build the playable Track while the encrypted source still exists (NCM
                     // metadata/cover lives in its header).
                     val track = TrackBuilder.build(
@@ -658,7 +666,8 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                         decryptedFile = saved.cacheFile,
                         mediaStoreUri = saved.mediaStoreUri ?: saved.customDirUri,
                         formatTag = formatTag,
-                        publicPath = saved.publicPath
+                        publicPath = saved.publicPath,
+                        lyrics = lrc
                     )
 
                     runOnUiThread {
@@ -740,6 +749,46 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         }
     }
 
+    /**
+     * Returns the LRC for this output (to be exported + displayed), or null. Surfaces an
+     * already-embedded lyric without any network; otherwise, when enabled, looks it up online from
+     * the origin platform ([LyricsFetcher]) and embeds it into the audio tag. Runs on the existing
+     * background thread; best-effort, swallows all errors. The audio is already correct without it.
+     */
+    private fun maybeFetchLyrics(
+        file: File,
+        audioFmt: AudioFormat,
+        platformTag: String,
+        displayName: String
+    ): String? {
+        try {
+            // Pre-existing embedded lyric (e.g. a QMC that already carried one) — use, no network.
+            MetadataEditor.readLyrics(file)?.takeIf { LrcParser.hasRealLyrics(it) }?.let { return it }
+
+            if (!LyricsPrefs.isEnabled(this)) return null
+            if (!MetadataEditor.isEmbeddable(audioFmt)) return null
+
+            val existing = MetadataEditor.read(file)
+            // File name first (its "Artist - Title" is usually truer than generic embedded tags),
+            // then the embedded title/artist. Same strategy as cover lookup.
+            val candidates = buildList {
+                CoverFetcher.parseFromFilename(displayName)?.let { add(it) }
+                val a = existing?.artist?.takeIf { it.isNotBlank() }
+                val t = existing?.title?.takeIf { it.isNotBlank() }
+                if (a != null && t != null) add(CoverFetcher.Query(a, t))
+            }.distinct()
+
+            for (q in candidates) {
+                val lrc = LyricsFetcher.fetch(platformTag, q) ?: continue
+                MetadataEditor.embedLyricsIfMissing(file, audioFmt, lrc)
+                return lrc
+            }
+        } catch (_: Exception) {
+            // Best-effort: the decrypted audio is already correct without lyrics.
+        }
+        return null
+    }
+
     private fun onDecryptAllComplete() {
         progressBar.visibility = View.GONE
         decryptAllButton.isEnabled = true
@@ -773,12 +822,14 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
     private fun saveDecrypted(
         originalName: String,
         decryptedFile: File,
-        audioFmt: AudioFormat
+        audioFmt: AudioFormat,
+        lrc: String? = null
     ): SaveResult {
         val ext = extFor(audioFmt)
         val baseName = FilenameSanitizer.sanitizeBase(originalName.substringBeforeLast("."))
         val timestamp = SimpleDateFormat("_HHmmss", Locale.getDefault()).format(Date())
         val outputName = FilenameSanitizer.sanitizeFileName("${baseName}解锁$timestamp$ext")
+        val lrcName = FilenameSanitizer.sanitizeFileName("${outputName.substringBeforeLast('.')}.lrc")
         val mime = getMimeType(ext)
 
         var publicPath: String? = null
@@ -788,11 +839,13 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         // 0) User-chosen custom folder (SAF) takes priority on any Android version.
         OutputDirStore.getTreeUri(this)?.let { tree ->
             customDirUri = saveViaTreeUri(tree, outputName, mime, decryptedFile)
+            if (customDirUri != null && lrc != null) saveLrcViaTreeUri(tree, lrcName, lrc)
         }
 
         // 1) Preferred on public releases: MediaStore Music/FreeNote, no broad storage permission.
         if (customDirUri == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             mediaStoreUri = saveViaMediaStore(outputName, mime, decryptedFile)
+            if (mediaStoreUri != null && lrc != null) saveLrcViaMediaStore(lrcName, lrc) // best-effort
         }
 
         // 2) Legacy Android 9 and below: direct write to /sdcard/FreeNote when permitted.
@@ -808,6 +861,7 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                     // Make it visible to music apps / the media scanner.
                     MediaScannerConnection.scanFile(this, arrayOf(out.absolutePath), arrayOf(mime), null)
                     publicPath = out.absolutePath
+                    if (lrc != null) runCatching { File(dir, lrcName).writeBytes(lrcBytes(lrc)) }
                 }
             } catch (_: Exception) {
                 publicPath = null
@@ -869,6 +923,36 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
             if (ok) doc.uri.toString() else { runCatching { doc.delete() }; null }
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /** UTF-8 + BOM bytes for an exported .lrc (BOM helps desktop players detect CJK). */
+    private fun lrcBytes(lrc: String): ByteArray =
+        byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + lrc.toByteArray(Charsets.UTF_8)
+
+    /** Best-effort: write the .lrc next to the audio in the user's SAF tree. */
+    private fun saveLrcViaTreeUri(treeUri: Uri, lrcName: String, lrc: String) {
+        runCatching {
+            val dir = DocumentFile.fromTreeUri(this, treeUri) ?: return
+            val doc = dir.createFile("application/octet-stream", lrcName) ?: return
+            contentResolver.openOutputStream(doc.uri)?.use { it.write(lrcBytes(lrc)) }
+        }
+    }
+
+    /**
+     * Best-effort: drop the .lrc into Music/FreeNote via MediaStore.Files. Scoped storage may reject
+     * a non-media file here; the embedded lyric tag is the guaranteed fallback, so failure is fine.
+     */
+    private fun saveLrcViaMediaStore(lrcName: String, lrc: String) {
+        runCatching {
+            val relPath = Environment.DIRECTORY_MUSIC + "/" + getString(R.string.output_folder)
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, lrcName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relPath)
+            }
+            val uri = contentResolver.insert(MediaStore.Files.getContentUri("external"), values) ?: return
+            contentResolver.openOutputStream(uri)?.use { it.write(lrcBytes(lrc)) }
         }
     }
 
