@@ -61,6 +61,12 @@
     <string name="help_got_it">知道了</string>
     <string name="menu_help">使用说明</string>
     <string name="menu_fetch_covers">联网补全封面</string>
+    <string name="menu_fetch_lyrics">联网补全歌词</string>
+    <string name="tab_cover">封面</string>
+    <string name="tab_lyrics">歌词</string>
+    <string name="lyrics_empty">暂无歌词</string>
+    <string name="cd_tab_cover">显示封面</string>
+    <string name="cd_tab_lyrics">显示歌词</string>
     <string name="help_download_apk">下载旧版安装包</string>
     <string name="help_apk_url">https://wwatt.lanzoup.com/b00g48x2kf</string>
     <string name="error_no_browser">未找到可打开链接的浏览器</string>
