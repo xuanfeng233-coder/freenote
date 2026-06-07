@@ -154,6 +154,8 @@ class PlayerUiController(
             override fun onTabUnselected(tab: TabLayout.Tab) {}
             override fun onTabReselected(tab: TabLayout.Tab) {}
         })
+        playerTabs.getTabAt(0)?.contentDescription = activity.getString(R.string.cd_tab_cover)
+        playerTabs.getTabAt(1)?.contentDescription = activity.getString(R.string.cd_tab_lyrics)
         showLyrics(false)
 
         seekBar.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
