@@ -7,6 +7,7 @@ package com.ncmdecrypt
  * [mediaStoreUri] is the public MediaStore Music/FreeNote copy, so tag edits can be mirrored back
  * to it. [publicPath] is the legacy direct File path on Android 9 and below, re-synced after a
  * tag edit. One of [mediaStoreUri] / [publicPath] is set depending on how it was saved.
+ * [lyricsPath] points at a sidecar .lrc file next to the cached audio, or null when there is none.
  */
 data class Track(
     val id: String,
@@ -16,6 +17,7 @@ data class Track(
     val album: String,
     val formatTag: String,
     val coverPath: String?,
+    val lyricsPath: String? = null,
     val mediaStoreUri: String?,
     val publicPath: String? = null
 ) {
