@@ -14,6 +14,12 @@
         app:showAsAction="never" />
 
     <item
+        android:id="@+id/action_fetch_covers"
+        android:checkable="true"
+        android:title="@string/menu_fetch_covers"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_help"
         android:title="@string/menu_help"
         app:showAsAction="never" />

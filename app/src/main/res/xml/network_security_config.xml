@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app is HTTPS-only by default. A few music cover APIs (Kuwo / Kugou) are still served over
+  cleartext HTTP, so cleartext is permitted ONLY for those domains. Everything else stays HTTPS.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">kuwo.cn</domain>
+        <domain includeSubdomains="true">kugou.com</domain>
+    </domain-config>
+</network-security-config>
