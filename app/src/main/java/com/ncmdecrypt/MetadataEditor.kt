@@ -1,7 +1,10 @@
 package com.ncmdecrypt
 
+import android.graphics.BitmapFactory
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.Tag
+import org.jaudiotagger.tag.flac.FlacTag
 import org.jaudiotagger.tag.images.AndroidArtwork
 import java.io.File
 import java.util.logging.Level
@@ -59,15 +62,36 @@ object MetadataEditor {
         setOrDelete(tag, FieldKey.ALBUM, album)
         if (newCover != null && newCover.isNotEmpty()) {
             tag.deleteArtworkField()
+            setArtwork(tag, newCover)
+        }
+        audioFile.commit()
+    }
+
+    /**
+     * Attach front-cover artwork. FLAC is special-cased: jAudioTagger's `FlacTag.setField(Artwork)`
+     * throws `UnsupportedOperationException` by design, so the PICTURE block must be built via
+     * [FlacTag.createArtworkField] with explicit dimensions. Other containers (MP3/OGG/M4A/WAV)
+     * accept the generic `AndroidArtwork` path. Dimensions are read cheaply (bounds only).
+     */
+    private fun setArtwork(tag: Tag, cover: ByteArray) {
+        val mime = detectCoverMime(cover)
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(cover, 0, cover.size, opts)
+        val w = opts.outWidth.coerceAtLeast(0)
+        val h = opts.outHeight.coerceAtLeast(0)
+        if (tag is FlacTag) {
+            tag.setField(tag.createArtworkField(cover, 3, mime, "", w, h, 24, 0))
+        } else {
             val art = AndroidArtwork().apply {
-                binaryData = newCover
-                mimeType = coverMime
+                binaryData = cover
+                mimeType = mime
                 pictureType = 3 // front cover
                 description = ""
+                setWidth(w)
+                setHeight(h)
             }
             tag.setField(art)
         }
-        audioFile.commit()
     }
 
     private fun setOrDelete(tag: org.jaudiotagger.tag.Tag, key: FieldKey, value: String) {
@@ -76,6 +100,75 @@ object MetadataEditor {
             runCatching { tag.deleteField(key) }
         } else {
             tag.setField(key, v)
+        }
+    }
+
+    /**
+     * Containers jAudioTagger can write tags into. Everything else (raw AAC/ADTS, APE, unknown)
+     * is skipped — embedding is a bonus, never a requirement.
+     */
+    fun isEmbeddable(fmt: AudioFormat): Boolean = when (fmt) {
+        AudioFormat.FLAC, AudioFormat.MP3, AudioFormat.OGG, AudioFormat.WAV -> true
+        else -> false
+    }
+
+    /** Magic-byte sniff for the cover MIME. Defaults to JPEG (NCM covers are JPEG). */
+    fun detectCoverMime(bytes: ByteArray): String = when {
+        bytes.size >= 4 &&
+            bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "image/png"
+        bytes.size >= 3 &&
+            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() &&
+            bytes[2] == 0xFF.toByte() -> "image/jpeg"
+        else -> "image/jpeg"
+    }
+
+    /**
+     * Best-effort, additive tagging used right after decryption so the public output carries a
+     * cover + title/artist/album like other unlockers. Only *missing* text fields are filled and
+     * the cover is embedded *only when the file has none* — so a decrypted QMC/KGM output that
+     * already carries its own tags is left byte-identical (no commit at all). NCM bodies have no
+     * tags, so this is where their header title/artist/album/cover land in the file.
+     *
+     * Never throws and never touches the audio frames. Unsupported containers are skipped. The
+     * file must already have the correct extension (jAudioTagger selects its reader by extension).
+     */
+    fun embedIfMissing(
+        file: File,
+        fmt: AudioFormat,
+        title: String?,
+        artist: String?,
+        album: String?,
+        cover: ByteArray?
+    ) {
+        if (!isEmbeddable(fmt)) return
+        try {
+            val audioFile = AudioFileIO.read(file)
+            val tag = audioFile.tagOrCreateAndSetDefault
+            var changed = false
+
+            fun fillIfBlank(key: FieldKey, value: String?) {
+                val v = value?.trim().orEmpty()
+                if (v.isEmpty()) return
+                val existing = runCatching { tag.getFirst(key) }.getOrNull()
+                if (existing.isNullOrBlank()) {
+                    tag.setField(key, v)
+                    changed = true
+                }
+            }
+            fillIfBlank(FieldKey.TITLE, title)
+            fillIfBlank(FieldKey.ARTIST, artist)
+            fillIfBlank(FieldKey.ALBUM, album)
+
+            val hasArtwork = runCatching { tag.firstArtwork != null }.getOrDefault(false)
+            if (!hasArtwork && cover != null && cover.isNotEmpty()) {
+                setArtwork(tag, cover)
+                changed = true
+            }
+
+            if (changed) audioFile.commit()
+        } catch (_: Exception) {
+            // Embedding is a bonus; the raw decrypted audio is already correct. Swallow.
         }
     }
 }

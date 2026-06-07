@@ -142,10 +142,17 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
         decryptAllButton.setOnClickListener { onDecryptClicked() }
         topAppBar.inflateMenu(R.menu.main_menu)
         topAppBar.menu.findItem(R.id.action_root_import).isVisible = RootHelper.isRootAvailable()
+        topAppBar.menu.findItem(R.id.action_fetch_covers).isChecked = CoverPrefs.isEnabled(this)
         topAppBar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_import_keys -> { keyImporter.launch("*/*"); true }
                 R.id.action_root_import -> { onRootImportClicked(); true }
+                R.id.action_fetch_covers -> {
+                    val enabled = !item.isChecked
+                    item.isChecked = enabled
+                    CoverPrefs.setEnabled(this, enabled)
+                    true
+                }
                 R.id.action_help -> { showHelpDialog(); true }
                 else -> false
             }
@@ -615,7 +622,34 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
                 )
 
                 if (audioFmt != AudioFormat.UNKNOWN && decryptedFile.length() > 0) {
-                    val saved = saveDecrypted(displayName, decryptedFile, audioFmt)
+                    // Embed cover + title/artist/album so the public output matches other
+                    // unlockers. jAudioTagger picks its reader by extension, so give the temp the
+                    // right one first. NCM bodies carry no tags — their metadata/cover live in the
+                    // encrypted header; QMC/KGM bodies already carry tags, so this is a no-op for
+                    // them (file stays byte-identical). Best-effort: never fails the decrypt.
+                    val toSave = run {
+                        val tagged = File(workDir, decryptedFile.name + extFor(audioFmt))
+                        if (decryptedFile.renameTo(tagged)) {
+                            decryptedTemp = tagged
+                            val ncm = runCatching {
+                                MusicDecoder.extractNcmInfo(encryptedFile.absolutePath)
+                            }.getOrNull()
+                            MetadataEditor.embedIfMissing(
+                                tagged, audioFmt,
+                                ncm?.title, ncm?.artist, ncm?.album, ncm?.coverBytes
+                            )
+                            tagged
+                        } else {
+                            decryptedFile
+                        }
+                    }
+
+                    // If the output still has no cover (QMC/KGM/KWM often ship cover-less, unlike
+                    // NCM whose header carries one), look it up online from the origin platform.
+                    // Best-effort, gated by the user toggle; never fails the decrypt.
+                    maybeFetchCover(toSave, audioFmt, formatTag, displayName)
+
+                    val saved = saveDecrypted(displayName, toSave, audioFmt)
                     // Build the playable Track while the encrypted source still exists (NCM
                     // metadata/cover lives in its header).
                     val track = TrackBuilder.build(
@@ -666,6 +700,44 @@ class MainActivity : AppCompatActivity(), FileListAdapter.Host, MetadataEditShee
             ?.takeIf { it.isNotBlank() }
             ?.take(MAX_ERROR_DETAIL_CHARS)
             ?: getString(R.string.error_decrypt_failed)
+    }
+
+    /**
+     * When enabled, look the album cover up online for an output that has none, and embed it. NCM
+     * already carries its cover in the header (embedded earlier), so this mainly serves QMC/KGM/KWM,
+     * whose decrypted streams are frequently cover-less. Queries the origin platform first (see
+     * [CoverFetcher]). Runs on the existing background thread; best-effort, swallows all errors.
+     */
+    private fun maybeFetchCover(
+        file: File,
+        audioFmt: AudioFormat,
+        platformTag: String,
+        displayName: String
+    ) {
+        if (!CoverPrefs.isEnabled(this)) return
+        if (!MetadataEditor.isEmbeddable(audioFmt)) return
+        try {
+            val existing = MetadataEditor.read(file)
+            val existingCover = existing?.coverBytes
+            if (existingCover != null && existingCover.isNotEmpty()) return // already has artwork
+
+            // Try the file name first (its "Artist - Title" is usually truer than generic embedded
+            // tags like "track 03"), then fall back to the embedded title/artist.
+            val candidates = buildList {
+                CoverFetcher.parseFromFilename(displayName)?.let { add(it) }
+                val a = existing?.artist?.takeIf { it.isNotBlank() }
+                val t = existing?.title?.takeIf { it.isNotBlank() }
+                if (a != null && t != null) add(CoverFetcher.Query(a, t))
+            }.distinct()
+
+            for (q in candidates) {
+                val cover = CoverFetcher.fetch(platformTag, q) ?: continue
+                MetadataEditor.embedIfMissing(file, audioFmt, q.title, q.artist, existing?.album, cover)
+                return
+            }
+        } catch (_: Exception) {
+            // Best-effort: the decrypted audio is already correct without a cover.
+        }
     }
 
     private fun onDecryptAllComplete() {

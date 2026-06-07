@@ -60,6 +60,7 @@
     <string name="help_message">可直接离线解密（无需任何操作）：\n• 网易云 .ncm\n• 酷狗 .kgm / .kgma / .vpr\n• 酷我 .kwm / .kwma\n• QQ音乐／Moo 内嵌密钥的文件（.qmc / .mflac / .mgg 等）\n\n需要额外处理：\n• 酷狗 .kgg\n• QQ音乐 尾部为 STag / musicex 的文件\n这类文件的密钥存在客户端数据库里、没写进文件，无法直接离线解密。两种办法：\n\n方法一（推荐）｜用旧版客户端重新下载\n旧版会把密钥内嵌进文件，下载即可直接解。\n• QQ音乐：回退到 10.12.0.8（v11.6 之前内嵌密钥）\n• 酷狗音乐：回退到安卓 12.5.6（最后一个支持 .kgm 的版本，约 2024-11）\n已在蓝奏云备好这两个降级安装包，点下方「下载旧版安装包」直接获取。\n\n方法二｜导入密钥（需能访问客户端数据库）\n在菜单点「导入密钥」，导入任一格式：\n• MMKV：QQ音乐的 MMKVStreamEncryptId 明文库\n• JSON：{ \"文件名\": \"base64密钥\" }\n• 文本：每行「文件名&lt;TAB或=或,&gt;base64密钥」\n密钥库需从 PC 客户端或已 root 的安卓导出；未 root 的安卓读不到其它 App 的私有数据，请改用方法一。\n\n其它：APE 能解密，但内置播放器不支持预览，可解出后用其它播放器播放。</string>
     <string name="help_got_it">知道了</string>
     <string name="menu_help">使用说明</string>
+    <string name="menu_fetch_covers">联网补全封面</string>
     <string name="help_download_apk">下载旧版安装包</string>
     <string name="help_apk_url">https://wwatt.lanzoup.com/b00g48x2kf</string>
     <string name="error_no_browser">未找到可打开链接的浏览器</string>
