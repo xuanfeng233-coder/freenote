@@ -47,8 +47,9 @@ adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk
 - **Toolchain**: Java 17, Android SDK 34, Gradle 8.5 (wrapper), AGP 8.2.2, Kotlin 1.9.22.
   `versionName` / `versionCode` live in `app/build.gradle.kts` (the *only* source of truth).
 - **JVM unit tests now exist** under `app/src/test`. They cover pure logic around filename
-  sanitization, EKey/MMKV parsing, QMC footer behavior, malformed header bounds, and audio
-  format detection. Full codec vectors should still come only from known-good reference
+  sanitization, EKey/MMKV parsing, QMC footer behavior, malformed header bounds, audio
+  format detection, LRC parsing (`LrcParser`), and lyric-provider response parsing (`LyricsFetcher`).
+  Full codec vectors should still come only from known-good reference
   implementations (see below). Real-device smoke testing remains manual: Bluetooth/`adb push`
   a real `.ncm` / `.qmc` / `.kgm` / `.kwm` to the phone, open it in the app, play the output.
 - Historic test device: Vivo/OPPO `3142621725000KW` (Android 14+). If `adb install` hangs,
@@ -60,7 +61,7 @@ adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk
 - **Release signing material (this machine):** the real signing identity lives OUTSIDE the repo at
   `/Users/xuanfeng/claudecode/freenote-private-artifacts-20260606/signing/` —
   `keystore.properties` + `braynlabs.keystore` (alias `braynlabs`, cert SHA-256
-  `8E:E3:94:24:…:DF:32:60:FF`; this is the cert v1.0.0/v1.1.0/v1.2.0 shipped with — reusing it is
+  `8E:E3:94:24:…:DF:32:60:FF`; this is the cert v1.0.0–v1.3.0 shipped with — reusing it is
   required so update installs don't break). Build a signed release with:
   `FREENOTE_KEYSTORE_PROPERTIES=/Users/xuanfeng/claudecode/freenote-private-artifacts-20260606/signing/keystore.properties ./gradlew assembleRelease`.
   Passwords are in that `keystore.properties` only — never copy them here.
@@ -108,9 +109,9 @@ adb install -r -t -g app/build/outputs/apk/debug/app-debug.apk
 | `FileListAdapter.kt` | File rows: status, cover thumb, play/edit-tags/share buttons. |
 | `PlaybackService.kt` | Media3 `MediaSessionService` — background ExoPlayer + lock-screen/notification. |
 | `PlayerHub.kt` | Owns the `MediaController` + queue; broadcasts `PlayerState`. |
-| `PlayerUiController.kt` | Bottom-sheet player + Apple-Music-style motion (spring cover, mini↔full expand, Palette ambient gradient). |
-| `Track.kt` / `TrackBuilder.kt` | `Track` model + building it post-decrypt (NCM header info or `MediaMetadataRetriever`; writes cover + lyrics `.lrc` sidecars). |
-| `MetadataEditor.kt` / `MetadataEditSheet.kt` | jAudioTagger read/write of title/artist/album/cover + bottom-sheet editor. `embedIfMissing` is the additive post-decrypt tagger (fills blanks / cover-if-none, byte-stable otherwise). |
+| `PlayerUiController.kt` | Bottom-sheet player + Apple-Music-style motion (spring cover, mini↔full expand, Palette ambient gradient) + 封面/歌词 `TabLayout` driving `LyricsView` (synced scroll). |
+| `Track.kt` / `TrackBuilder.kt` | `Track` model (incl. `lyricsPath`) + building it post-decrypt (NCM header info or `MediaMetadataRetriever`; writes cover + lyrics `.lrc` sidecars). |
+| `MetadataEditor.kt` / `MetadataEditSheet.kt` | jAudioTagger read/write of title/artist/album/cover + bottom-sheet editor. `embedIfMissing` is the additive post-decrypt tagger (fills blanks / cover-if-none, byte-stable otherwise); `embedLyricsIfMissing` / `readLyrics` do the same for `FieldKey.LYRICS` (lyric-if-none, byte-stable). |
 | `CoverFetcher.kt` / `CoverPrefs.kt` | **Networked (one of two — see also `LyricsFetcher`).** Online album-cover lookup, origin-platform-first (QMC→QQ, KGM→酷狗, KWM→酷我, else 网易云→iTunes), strict artist+title match to avoid wrong covers. `CoverPrefs` is the on-by-default toggle. |
 | `LyricsFetcher.kt` / `LyricsPrefs.kt` | Online LRC lookup (origin-platform-first, reuses CoverFetcher matching + `MusicHttp`) + its on-by-default toggle. |
 | `LrcParser.kt` / `LyricsView.kt` | Pure LRC→`LrcLine` parser + custom synced-scrolling lyric view (player "歌词" tab). |

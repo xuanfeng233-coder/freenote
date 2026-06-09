@@ -99,7 +99,8 @@
 - **UI**：Material 3（深色主题，全部走主题色令牌，零硬编码 hex），ViewBinding
 - **播放**：AndroidX Media3（`media3-exoplayer` + `media3-session`），后台 `MediaSessionService`
 - **动效**：`androidx.dynamicanimation`（弹簧）+ `androidx.palette`（封面取色）
-- **标签**：`net.jthink:jaudiotagger`（读写 FLAC/MP3/OGG/M4A/WAV 元数据）
+- **标签**：`net.jthink:jaudiotagger`（读写 FLAC/MP3/OGG/M4A/WAV 元数据，含 `FieldKey.LYRICS`）
+- **联网补全**：`HttpURLConnection` + `org.json`（`MusicHttp` 共用）—— 封面 / 歌词来源平台优先查询，仅发歌名/艺术家
 
 ## 项目结构
 
@@ -118,9 +119,13 @@ ncm-android/
 │       │   ├── FileListAdapter.kt      # 文件列表（状态 / 封面 / 播放·编辑·分享）
 │       │   ├── PlaybackService.kt      # Media3 MediaSessionService（后台播放）
 │       │   ├── PlayerHub.kt            # 持有 MediaController + 队列，广播 PlayerState
-│       │   ├── PlayerUiController.kt    # 底部 sheet 播放器 + Apple Music 风格动效
+│       │   ├── PlayerUiController.kt    # 底部 sheet 播放器 + Apple Music 风格动效 + 封面/歌词 tab
 │       │   ├── Track.kt / TrackBuilder.kt   # Track 模型 + 解密后构建（含封面/歌词 sidecar）
-│       │   └── MetadataEditor.kt / MetadataEditSheet.kt   # jAudioTagger 标签编辑
+│       │   ├── MetadataEditor.kt / MetadataEditSheet.kt   # jAudioTagger 标签编辑（标题/艺术家/专辑/封面/歌词）
+│       │   ├── CoverFetcher.kt / CoverPrefs.kt   # 联网补全封面（来源平台优先）+ 开关
+│       │   ├── LyricsFetcher.kt / LyricsPrefs.kt # 联网补全歌词（LRC，来源平台优先）+ 开关
+│       │   ├── LrcParser.kt / LyricsView.kt      # LRC 解析 + 同步滚动歌词视图（播放器「歌词」tab）
+│       │   └── MusicHttp.kt                      # 封面/歌词共用 best-effort HTTP GET
 │       └── res/                        # 布局 / drawable / 主题 / strings
 ├── build.gradle.kts                # 项目级插件版本
 ├── settings.gradle.kts
@@ -132,8 +137,9 @@ ncm-android/
 ## 核心架构
 
 - **`MusicDecoder.kt`** — 统一解码器，两种模式：`decrypt(data, filename)`（小文件内存）与 `decryptFile(in, out, filename)`（大文件 64KB 流式，OOM-proof）。`extractNcmInfo()` 从 `.ncm` 头部提取标题/艺术家/专辑 + 封面。
-- **播放链路**：`PlaybackService`（前台 `mediaPlayback` 服务，ExoPlayer + MediaSession，自动处理音频焦点/拔耳机暂停）← `PlayerHub`（MediaController + 队列 + `PlayerState` 广播）← `PlayerUiController`（mini ↔ 全屏容器展开、封面弹簧缩放、Palette 取色氛围渐变、流动进度 + 跑马灯）。
-- **解密后元数据**：`TrackBuilder` 构建 `Track`（NCM 头信息或 `MediaMetadataRetriever` 读标签，写 `<音频>.cover` sidecar）；`MetadataEditor` / `MetadataEditSheet` 用 jAudioTagger 改写并镜像到 MediaStore。
+- **播放链路**：`PlaybackService`（前台 `mediaPlayback` 服务，ExoPlayer + MediaSession，自动处理音频焦点/拔耳机暂停）← `PlayerHub`（MediaController + 队列 + `PlayerState` 广播）← `PlayerUiController`（mini ↔ 全屏容器展开、封面弹簧缩放、Palette 取色氛围渐变、流动进度 + 跑马灯、封面/歌词 tab 随播放滚动）。
+- **解密后元数据**：`TrackBuilder` 构建 `Track`（NCM 头信息或 `MediaMetadataRetriever` 读标签，写 `<音频>.cover` 与 `.lrc` sidecar）；`MetadataEditor` / `MetadataEditSheet` 用 jAudioTagger 改写标题/艺术家/专辑/封面/歌词并镜像到 MediaStore。
+- **联网补全（全程唯一的联网）**：`CoverFetcher`（封面）/ `LyricsFetcher`（LRC 歌词）按来源平台优先（QQ/酷狗/酷我，再退网易云/iTunes）、严格「歌名+艺术家」匹配，共用 `MusicHttp`（`HttpURLConnection` + `org.json`），**只发歌名/艺术家文本**。歌词内嵌 `FieldKey.LYRICS` + 导出同名 `.lrc`，由 `LrcParser`/`LyricsView` 驱动播放器「歌词」tab。两个独立默认开开关 `CoverPrefs` / `LyricsPrefs`。
 - **导入密钥**：`MmkvParser` 解析 QQ音乐 MMKV vault → `EkeyStore` 持久化到 `filesDir/ekeys.json`，解密时按文件名/词干匹配。
 
 ## 支持格式与算法
